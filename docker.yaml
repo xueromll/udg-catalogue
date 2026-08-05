@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  udg-pipeline:
+    build: .
+    container_name: udg_research_app
+    ports:
+      - "8501:8501"
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    volumes:
+      - .:/app
+    restart: unless-stopped

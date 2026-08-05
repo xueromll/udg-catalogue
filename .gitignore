@@ -1,0 +1,17 @@
+.env
+
+__pycache__/
+.vscode/
+
+udg_database.csv
+udg_database.csv.bak
+processed_arxiv_ids.txt
+pipeline_meta.json
+
+pipeline.log
+correlation_heatmap.png
+correlation_report.txt
+udg_3d_map.html
+analysis/
+
+*.mp4

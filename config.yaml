@@ -1,0 +1,14 @@
+model: "deepseek-v4-flash"
+csv_file: "udg_database.csv"
+sorted_csv_file: "udg_database_sorted.csv"
+processed_file: "processed_arxiv_ids.txt"
+html_map_file: "udg_3d_map.html"
+log_file: "pipeline.log"
+search_query: "cat:astro-ph.GA AND abs:ultra-diffuse"
+max_papers: 500
+sleep_between: 5
+max_retries: 3
+timeout: 25
+user_agent: "UDG-ResearchScript/1.0 (lanhua1122333@gmail.com)"
+max_dist_mpc: 5.0
+min_samples: 2
