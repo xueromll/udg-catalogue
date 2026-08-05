@@ -98,13 +98,16 @@ python main.py
 streamlit run app.py
 ```
 
-### Docker
+### Docker (Recommended)
+
+1. Make sure your `.env` file is configured in the root directory.
+2. Build and run the container using Docker Compose:
 
 ```bash
-docker build -t udg-catalogue .
-
-docker run -p 8501:8501 --env-file .env udg-catalogue
+docker compose -f docker.yaml up --build
 ```
+
+The Streamlit dashboard will be available at `http://localhost:8501`.
 
 ---
 
