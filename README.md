@@ -125,7 +125,7 @@ docker run -p 8501:8501 --env-file .env udg-catalogue
 
 ###  Galaxy Map
 
-![3D Map](assets/demo.mp4)
+![3D Map](assets/demo.png)
 
 *Interactive 3D map showing UDG distribution across 45 constellations. Hover over any point to see detailed galaxy parameters.*
 
