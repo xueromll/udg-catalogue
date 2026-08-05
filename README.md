@@ -6,7 +6,7 @@
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg)](https://deepseek.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **A fully automated ETL pipeline that scrapes 540+ astrophysics papers from arXiv, extracts structured data about Ultra-Diffuse Galaxies (UDGs) using DeepSeek V4-Flash, and visualizes 1,768 galaxies in an interactive 3D map — all built in 72 hours at a cost of $2.61.**
+> **A fully automated ETL pipeline that scrapes 540+ astrophysics papers from arXiv, extracts structured data about Ultra-Diffuse Galaxies (UDGs) using DeepSeek V4-Flash, and visualizes 1,769 galaxies in an interactive 3D map — all built in 72 hours at a cost of $2.61.**
 
 ---
 
@@ -32,11 +32,24 @@
 | **100% completeness objects** | 85 |
 | **3D spatial clusters (DBSCAN)** | 71 |
 | **Constellations mapped** | 45 |
-| **Total API cost** | **$2.61** |
+| **Pipeline runs (for testing)** | 4 full ETL runs |
+| **Total API cost (all runs)** | **$2.61** |
 | **Development time** | 72 hours |
 | **Codebase** | ~800 lines (modular) |
 
+**Why only $2.61?**
+The pipeline was run **4 times** from scratch (clearing `processed_arxiv_ids` each time) to test the extraction logic, ensure fault tolerance, and validate the data quality after refactoring. Even with 4 full passes over the same 540+ papers — downloading LaTeX sources, sending text to DeepSeek, and writing to CSV — the total cost did not exceed **$2.61 USD**. This demonstrates the cost‑efficiency of both the model (DeepSeek V4‑Flash) and the pipeline design.
+
 ---
+
+## Engineering Approach
+
+- **Iterative testing** — the pipeline was executed 4 times from scratch with cleared state, simulating first‑run conditions. Each run verified:
+  - Robustness against missing or malformed PDFs
+  - Correctness of the extraction schema (JSON parsing, percentage conversion)
+  - Performance of the deduplication and clustering steps
+- **Fault‑tolerance by design** — exponential backoff, retries, fallback strategies (LaTeX → PDF → abstract), and persistent state (`processed_arxiv_ids.txt`) allow the pipeline to survive network hiccups and resume seamlessly.
+- **Cost‑conscious** — every API call was logged and counted. The total spend stayed under $3 even with multiple full runs, proving that the system can be maintained on a minimal budget.
 
 ## Tech Stack
 
@@ -51,7 +64,7 @@
 | **Dashboard** | Streamlit |
 | **Configuration** | YAML, python-dotenv, Pydantic |
 | **Logging** | structlog-style with file + console |
-| **Containerization** | Docker |
+| **Containerization** | Docker Compose |
 
 ---
 
@@ -113,7 +126,7 @@ The Streamlit dashboard will be available at `http://localhost:8501`.
 
 ## Dashboard Features
 
-- **3D Interactive Map** — explore 1,768 galaxies with color-coding by:
+- **3D Interactive Map** — explore 1,769 galaxies with color-coding by:
   - Dark Matter Fraction
   - Completeness (%)
   - Distance (Mpc)
