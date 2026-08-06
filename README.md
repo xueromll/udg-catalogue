@@ -6,7 +6,7 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.20+-red.svg?style=flat-square)](https://streamlit.io/)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg?style=flat-square)](https://deepseek.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg?style=flat-square)](#)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg?style=flat-square)](#)
 
 </div>
 
@@ -182,6 +182,7 @@ The project includes a comprehensive test suite built with `pytest` and `pytest-
 | **Pipeline Orchestration** | `process_single_paper_task` evaluated with isolated mocked dependencies. |
 
 > All tests are **offline-first** — they rely on `pytest-mock` to intercept network requests, such as the DeepSeek API and arXiv downloads. This ensures fast, repeatable, and cost‑free validation without burning API tokens.
+> Core modules (`arxiv_client`, `data_processor`, `incremental`, `logger`, `config`, `prompts`) are fully tested with 95–100% coverage. The orchestration layer (`main.py`) is partially tested, covering the critical execution path.
 
 ### Running Tests
 
