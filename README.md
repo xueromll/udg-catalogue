@@ -1,10 +1,10 @@
-
 # UDG Catalogue — Automated ETL Pipeline for Ultra-Diffuse Galaxies
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.20+-red.svg)](https://streamlit.io/)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg)](https://deepseek.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#)
 
 > **A fully automated ETL pipeline that scrapes 540+ astrophysics papers from arXiv, extracts structured data about Ultra-Diffuse Galaxies (UDGs) using DeepSeek V4-Flash, and visualizes 1,769 galaxies in an interactive 3D map — all built in 72 hours at a cost of $2.61.**
 
@@ -51,6 +51,8 @@ The pipeline was run **4 times** from scratch (clearing `processed_arxiv_ids` ea
 - **Fault‑tolerance by design** — exponential backoff, retries, fallback strategies (LaTeX → PDF → abstract), and persistent state (`processed_arxiv_ids.txt`) allow the pipeline to survive network hiccups and resume seamlessly.
 - **Cost‑conscious** — every API call was logged and counted. The total spend stayed under $3 even with multiple full runs, proving that the system can be maintained on a minimal budget.
 
+---
+
 ## Tech Stack
 
 | Domain | Technologies |
@@ -70,7 +72,7 @@ The pipeline was run **4 times** from scratch (clearing `processed_arxiv_ids` ea
 
 ## Project Structure
 
-```
+```text
 udg-catalogue/
 ├── main.py                 # Pipeline orchestration
 ├── app.py                  # Streamlit dashboard
@@ -87,6 +89,7 @@ udg-catalogue/
 ├── Dockerfile              # Container setup
 ├── LICENSE                 # MIT License
 └── README.md               # This file
+
 ```
 
 ---
@@ -96,7 +99,7 @@ udg-catalogue/
 ### Local Installation
 
 ```bash
-git clone https://github.com/xueromll/udg-catalogue.git
+git clone [https://github.com/xueromll/udg-catalogue.git](https://github.com/xueromll/udg-catalogue.git)
 cd udg-catalogue
 
 python -m venv venv
@@ -109,6 +112,7 @@ cp .env.example .env
 python main.py
 
 streamlit run app.py
+
 ```
 
 ### Docker (Recommended)
@@ -118,6 +122,7 @@ streamlit run app.py
 
 ```bash
 docker compose -f docker.yaml up --build
+
 ```
 
 The Streamlit dashboard will be available at `http://localhost:8501`.
@@ -126,20 +131,22 @@ The Streamlit dashboard will be available at `http://localhost:8501`.
 
 ## Dashboard Features
 
-- **3D Interactive Map** — explore 1,769 galaxies with color-coding by:
-  - Dark Matter Fraction
-  - Completeness (%)
-  - Distance (Mpc)
-  - Cluster ID
-- **Real-time Filtering** — filter by constellation, cluster, completeness, and quality flag
-- **Analytics View** — distribution plots (mass, radius) and mass-radius scatter with completeness coloring
-- **Data Export** — download filtered data as CSV
+* **3D Interactive Map** — explore 1,769 galaxies with color-coding by:
+* Dark Matter Fraction
+* Completeness (%)
+* Distance (Mpc)
+* Cluster ID
+
+
+* **Real-time Filtering** — filter by constellation, cluster, completeness, and quality flag
+* **Analytics View** — distribution plots (mass, radius) and mass-radius scatter with completeness coloring
+* **Data Export** — download filtered data as CSV
 
 ---
 
 ## Gallery
 
-###  Galaxy Map
+### Galaxy Map
 
 ![3D Map](assets/demo.png)
 
@@ -153,25 +160,91 @@ The Streamlit dashboard will be available at `http://localhost:8501`.
 
 ---
 
+## Testing
+
+The project includes a comprehensive test suite built with `pytest` and `pytest-mock`. Tests cover:
+
+| Module | Coverage |
+| --- | --- |
+| **Data Processing** | `universal_normalize_name`, `is_valid_galaxy`, `calculate_completeness`, `assign_quality_flag`, `upsert_to_csv`, and `process_database`. |
+| **Deduplication & Cross-matching** | `clean_duplicates` with synthetic Astropy coordinate merging and separation thresholds. |
+| **Clustering & Mapping** | DBSCAN spatial logic (`assign_3d_clusters`) and `assign_constellations`. |
+| **State Management** | `load_processed_ids`, `save_processed_id`, `load_pipeline_metadata`, and `save_pipeline_metadata`. |
+| **arXiv Processing** | `search_arxiv` (429 retry and exception handling), `parse_arxiv_xml`, and `fetch_paper_text` (LaTeX and PDF fallbacks). |
+| **Text Trimming** | `trim_references` and `extract_tables_from_pdf`. |
+| **LLM Extraction** | Mocked DeepSeek API for `is_paper_relevant` and `extract_udg_data` to validate JSON parsing. |
+| **Prompts & Config** | Validating YAML config loading and system prompt instructions. |
+| **Logging** | Validating `setup_logger` and its stream/file handlers. |
+| **Pipeline Orchestration** | `process_single_paper_task` evaluated with isolated mocked dependencies. |
+
+> All tests are **offline-first** — they rely on `pytest-mock` to intercept network requests, such as the DeepSeek API and arXiv downloads. This ensures fast, repeatable, and cost‑free validation without burning API tokens.
+
+### Running Tests
+
+```bash
+pip install pytest pytest-mock pytest-cov
+
+pytest tests/
+
+pytest --cov=arxiv_client --cov=data_processor --cov=incremental --cov=logger --cov=main --cov-fail-under=100
+
+```
+
+---
+
+## Future Work
+
+* [ ] Integrate **sci-etl-core** as a reusable library
+* [ ] Add support for other astronomical catalogues (e.g., dSph, LSB galaxies)
+* [ ] Deploy Streamlit dashboard to Streamlit Cloud
+* [ ] Add automated weekly updates via GitHub Actions
+
+---
+
+## Contributing
+
+Contributions are welcome! Please open an issue first to discuss what you'd like to change. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## Citation
+
+If you use this project in your research, please cite it as:
+
+```bibtex
+@misc{udg-catalogue-2026,
+  author = {Lan},
+  title = {UDG Catalogue: Automated ETL Pipeline for Ultra-Diffuse Galaxies},
+  year = {2026},
+  publisher = {GitHub},
+  howpublished = {\url{[https://github.com/xueromll/udg-catalogue](https://github.com/xueromll/udg-catalogue)}}
+}
+
+```
+
+---
+
 ## License
 
-MIT License — feel free to use, modify, and build upon this work. See the [LICENSE](LICENSE) file for details.
+MIT License — feel free to use, modify, and build upon this work. See the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
 
 ---
 
 ## Acknowledgments
 
-- **arXiv** for providing open access to astrophysics papers
-- **DeepSeek** for their affordable and powerful LLM API
-- All the astrophysicists whose papers made this catalogue possible
+* **arXiv** for providing open access to astrophysics papers
+* **DeepSeek** for their affordable and powerful LLM API
+* All the astrophysicists whose papers made this catalogue possible
 
 ---
 
 ## Contact
 
-Maintained by **Lan**  
-GitHub: [xueromll](https://github.com/xueromll)  
-Email: [lanhua1122333@gmail.com](mailto:lanhua1122333@gmail.com)
+Maintained by **Lan**
+
+GitHub: [xueromll](https://www.google.com/search?q=https://github.com/xueromll)
+
+Email: [lanhua1122333@gmail.com](https://www.google.com/search?q=mailto%3Alanhua1122333%40gmail.com)
 
 ---
 
