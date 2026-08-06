@@ -1,10 +1,14 @@
 # UDG Catalogue — Automated ETL Pipeline for Ultra-Diffuse Galaxies
 
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.20+-red.svg)](https://streamlit.io/)
-[![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg)](https://deepseek.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#)
+<div align="center">
+
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?style=flat-square)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.20+-red.svg?style=flat-square)](https://streamlit.io/)
+[![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg?style=flat-square)](https://deepseek.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg?style=flat-square)](#)
+
+</div>
 
 > **A fully automated ETL pipeline that scrapes 540+ astrophysics papers from arXiv, extracts structured data about Ultra-Diffuse Galaxies (UDGs) using DeepSeek V4-Flash, and visualizes 1,769 galaxies in an interactive 3D map — all built in 72 hours at a cost of $2.61.**
 
