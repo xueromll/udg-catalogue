@@ -13,5 +13,6 @@ correlation_heatmap.png
 correlation_report.txt
 udg_3d_map.html
 analysis/
+.coverage
 
 *.mp4
