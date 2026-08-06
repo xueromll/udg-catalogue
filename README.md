@@ -230,7 +230,7 @@ If you use this project in your research, please cite it as:
 
 ## License
 
-MIT License — feel free to use, modify, and build upon this work. See the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
+MIT License — feel free to use, modify, and build upon this work. See the [LICENSE](LICENSE.md) file for details.
 
 ---
 
