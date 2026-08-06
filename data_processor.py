@@ -24,10 +24,14 @@ def universal_normalize_name(name: str) -> str:
     if not name or pd.isna(name):
         return ""
     s = str(name).strip().lower()
-    s = re.sub(r"\bdf\s*(?=\d)", "dragonfly", s)
-    s = re.sub(r"^df(?=\d)", "dragonfly", s)
     s = re.sub(r"[^a-z0-9]", "", s)
-    s = re.sub(r"(?<=[a-z])0+(?=\d)", "", s)
+    digits_match = re.search(r"\d+", s)
+    if digits_match:
+        digits = str(int(digits_match.group()))
+        if s.startswith("vcc"):
+            return f"vcc{digits}"
+        return f"dragonfly{digits}"
+        
     return s
 
 def load_processed_ids() -> set[str]:
