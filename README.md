@@ -96,7 +96,7 @@ udg-catalogue/
 ### Local Installation
 
 ```bash
-git clone https://github.com/your-username/udg-catalogue.git
+git clone https://github.com/xueromll/udg-catalogue.git
 cd udg-catalogue
 
 python -m venv venv

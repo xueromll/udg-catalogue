@@ -40,6 +40,6 @@ FORBIDDEN_KEYWORDS = [
     "subhalo", "test", "example", "idealized", "artific"
 ]
 FORBIDDEN_PATTERN = re.compile(
-    r"\b(" + "|".join(FORBIDDEN_KEYWORDS) + r")\b|^(" + "|".join(FORBIDDEN_KEYWORDS) + r")[-_0-9]",
+    r"\b(" + "|".join(FORBIDDEN_KEYWORDS) + r")([-_0-9]*)\b",
     re.IGNORECASE
 )
