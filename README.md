@@ -136,10 +136,10 @@ The Streamlit dashboard will be available at `http://localhost:8501`.
 ## Dashboard Features
 
 * **3D Interactive Map** — explore 1,285 galaxies with color-coding by:
-* Dark Matter Fraction
-* Completeness (%)
-* Distance (Mpc)
-* Cluster ID
+  * Dark Matter Fraction
+  * Completeness (%)
+  * Distance (Mpc)
+  * Cluster ID
 
 
 * **Real-time Filtering** — filter by constellation, cluster, completeness, and quality flag
