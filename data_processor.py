@@ -106,29 +106,30 @@ def clean_duplicates(csv_file: str = CSV_FILE, max_sep_arcsec: float = 3.0) -> N
                 agg_vals = df.groupby("_norm_name")[col].first()
                 df_stage1[col] = df_stage1["_norm_name"].map(agg_vals)
 
-        valid_coords = df_stage1["ra"].notna() & df_stage1["dec"].notna()
-        if valid_coords.sum() > 1:
-            coords = SkyCoord(
-                ra=df_stage1.loc[valid_coords, "ra"].values * u.deg,
-                dec=df_stage1.loc[valid_coords, "dec"].values * u.deg
-            )
-            idx, d2d, _ = coords.match_to_catalog_sky(coords, nthneighbor=2)
-            sep_arcsec = d2d.to(u.arcsec).value
-            
-            valid_indices = df_stage1.index[valid_coords].to_numpy()
-            drop_indices = set()
-            
-            for local_i, neighbor_local_j in enumerate(idx):
-                if sep_arcsec[local_i] <= max_sep_arcsec:
-                    orig_i = valid_indices[local_i]
-                    orig_j = valid_indices[neighbor_local_j]
-                    if orig_i < orig_j and orig_j not in drop_indices:
-                        for col in columns_to_merge:
-                            if pd.isna(df_stage1.at[orig_i, col]) and pd.notna(df_stage1.at[orig_j, col]):
-                                df_stage1.at[orig_i, col] = df_stage1.at[orig_j, col]
-                        drop_indices.add(orig_j)
-            
-            df_stage1 = df_stage1.drop(index=list(drop_indices))
+        if "ra" in df_stage1.columns and "dec" in df_stage1.columns:
+            valid_coords = df_stage1["ra"].notna() & df_stage1["dec"].notna()
+            if valid_coords.sum() > 1:
+                coords = SkyCoord(
+                    ra=df_stage1.loc[valid_coords, "ra"].values * u.deg,
+                    dec=df_stage1.loc[valid_coords, "dec"].values * u.deg
+                )
+                idx, d2d, _ = coords.match_to_catalog_sky(coords, nthneighbor=2)
+                sep_arcsec = d2d.to(u.arcsec).value
+                
+                valid_indices = df_stage1.index[valid_coords].to_numpy()
+                drop_indices = set()
+                
+                for local_i, neighbor_local_j in enumerate(idx):
+                    if sep_arcsec[local_i] <= max_sep_arcsec:
+                        orig_i = valid_indices[local_i]
+                        orig_j = valid_indices[neighbor_local_j]
+                        if orig_i < orig_j and orig_j not in drop_indices:
+                            for col in columns_to_merge:
+                                if pd.isna(df_stage1.at[orig_i, col]) and pd.notna(df_stage1.at[orig_j, col]):
+                                    df_stage1.at[orig_i, col] = df_stage1.at[orig_j, col]
+                            drop_indices.add(orig_j)
+                
+                df_stage1 = df_stage1.drop(index=list(drop_indices))
 
         df_final = df_stage1.drop(columns=["_norm_name"])
         df_final.to_csv(csv_file, index=False, encoding="utf-8")
@@ -201,7 +202,7 @@ def upsert_to_csv(records: list[dict]) -> None:
 def calculate_completeness(df: pd.DataFrame) -> pd.DataFrame:
     existing_fields = [c for c in KEY_FIELDS if c in df.columns]
     if not existing_fields:
-        df["completeness_pct"] = 0
+        df["completeness_pct"] = 0.0
         return df
     filled_count = df[existing_fields].notna().sum(axis=1)
     df["filled_fields"] = filled_count
@@ -210,6 +211,8 @@ def calculate_completeness(df: pd.DataFrame) -> pd.DataFrame:
 
 def assign_constellations(df: pd.DataFrame) -> pd.DataFrame:
     df["constellation"] = "Unknown"
+    if "ra" not in df.columns or "dec" not in df.columns:
+        return df
     valid_coords = df["ra"].notna() & df["dec"].notna()
     if not valid_coords.any(): 
         return df
@@ -235,6 +238,8 @@ def assign_constellations(df: pd.DataFrame) -> pd.DataFrame:
 
 def assign_3d_clusters(df: pd.DataFrame, max_dist_mpc: float = MAX_DIST_MPC, min_samples: int = MIN_SAMPLES) -> pd.DataFrame:
     df["cluster_id"] = -1
+    if not {"ra", "dec", "distance_mpc"}.issubset(df.columns):
+        return df
     valid_3d = df["ra"].notna() & df["dec"].notna() & df["distance_mpc"].notna()
     if valid_3d.sum() < min_samples: 
         return df
@@ -285,17 +290,25 @@ def process_database() -> None:
     df = assign_3d_clusters(df)
     df = assign_quality_flag(df)
 
+    sort_cols = ["completeness_pct", "constellation", "cluster_id", "galaxy_name"]
+    available_sort_cols = [c for c in sort_cols if c in df.columns]
+
     df_sorted = df.sort_values(
-        by=["completeness_pct", "constellation", "cluster_id", "galaxy_name"],
-        ascending=[False, True, True, True]
+        by=available_sort_cols,
+        ascending=[False, True, True, True][:len(available_sort_cols)]
     )
 
     first_cols = ["galaxy_name", "completeness_pct", "quality_flag", "constellation", "cluster_id"]
-    df_sorted = df_sorted[first_cols + [c for c in df_sorted.columns if c not in first_cols]]
+    available_first_cols = [c for c in first_cols if c in df_sorted.columns]
+    
+    df_sorted = df_sorted[available_first_cols + [c for c in df_sorted.columns if c not in available_first_cols]]
     df_sorted.to_csv(SORTED_CSV_FILE, index=False, encoding="utf-8")
 
     logger.info(f"Total objects in database: {len(df_sorted)}")
-    logger.info(f"Objects with 100% completeness: {(df_sorted['completeness_pct'] == 100).sum()}")
-    logger.info(f"Constellations found: {df_sorted[df_sorted['constellation'] != 'Unknown']['constellation'].nunique()}")
-    logger.info(f"3D clusters formed: {df_sorted[df_sorted['cluster_id'] != -1]['cluster_id'].nunique()}")
+    if "completeness_pct" in df_sorted.columns:
+        logger.info(f"Objects with 100% completeness: {(df_sorted['completeness_pct'] == 100).sum()}")
+    if "constellation" in df_sorted.columns:
+        logger.info(f"Constellations found: {df_sorted[df_sorted['constellation'] != 'Unknown']['constellation'].nunique()}")
+    if "cluster_id" in df_sorted.columns:
+        logger.info(f"3D clusters formed: {df_sorted[df_sorted['cluster_id'] != -1]['cluster_id'].nunique()}")
     logger.info(f"Sorted database saved -> {SORTED_CSV_FILE}")

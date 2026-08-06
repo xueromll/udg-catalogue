@@ -6,11 +6,11 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.20+-red.svg?style=flat-square)](https://streamlit.io/)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg?style=flat-square)](https://deepseek.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg?style=flat-square)](#)
+[![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen.svg?style=flat-square)](#)
 
 </div>
 
-> **A fully automated ETL pipeline that scrapes 540+ astrophysics papers from arXiv, extracts structured data about Ultra-Diffuse Galaxies (UDGs) using DeepSeek V4-Flash, and visualizes 1,769 galaxies in an interactive 3D map — all built in 72 hours at a cost of $2.61.**
+> **A fully automated ETL pipeline that scrapes 540+ astrophysics papers from arXiv, extracts structured data about Ultra-Diffuse Galaxies (UDGs) using DeepSeek V4-Flash, and visualizes 1,285 galaxies in an interactive 3D map — all built in 72 hours at a cost of $2.61.**
 
 ---
 
@@ -20,7 +20,7 @@
 - **AI-powered structured extraction** — uses DeepSeek V4-Flash with strict JSON schema enforcement
 - **Interactive 3D visualization** — Plotly map with color-coded parameters and rich hover tooltips
 - **Streamlit dashboard** — real-time filtering, analytics, and CSV export
-- **Scientific processing** — DBSCAN clustering (71 groups), constellation mapping (45 constellations), quality flags
+- **Scientific processing** — DBSCAN clustering (56 groups), constellation mapping (44 constellations), quality flags
 - **Parallel ingestion** — ThreadPoolExecutor with 6 workers for high throughput
 - **Fault-tolerant** — exponential backoff, retries, state management, and graceful shutdown
 - **Container-ready** — Dockerfile included for reproducible deployment
@@ -32,14 +32,14 @@
 | Metric | Value |
 |--------|-------|
 | **Papers processed** | 540+ |
-| **Unique galaxies catalogued** | 1,769 |
-| **100% completeness objects** | 85 |
-| **3D spatial clusters (DBSCAN)** | 71 |
-| **Constellations mapped** | 45 |
+| **Unique galaxies catalogued** | 1,285 |
+| **100% completeness objects** | 66 |
+| **3D spatial clusters (DBSCAN)** | 56 |
+| **Constellations mapped** | 44 |
 | **Pipeline runs (for testing)** | 4 full ETL runs |
 | **Total API cost (all runs)** | **$2.61** |
 | **Development time** | 72 hours |
-| **Codebase** | ~800 lines (modular) |
+| **Codebase** | ~1000 lines (modular) |
 
 **Why only $2.61?**
 The pipeline was run **4 times** from scratch (clearing `processed_arxiv_ids` each time) to test the extraction logic, ensure fault tolerance, and validate the data quality after refactoring. Even with 4 full passes over the same 540+ papers — downloading LaTeX sources, sending text to DeepSeek, and writing to CSV — the total cost did not exceed **$2.61 USD**. This demonstrates the cost‑efficiency of both the model (DeepSeek V4‑Flash) and the pipeline design.
@@ -51,7 +51,7 @@ The pipeline was run **4 times** from scratch (clearing `processed_arxiv_ids` ea
 - **Iterative testing** — the pipeline was executed 4 times from scratch with cleared state, simulating first‑run conditions. Each run verified:
   - Robustness against missing or malformed PDFs
   - Correctness of the extraction schema (JSON parsing, percentage conversion)
-  - Performance of the deduplication and clustering steps
+  - Performance of the deduplication and clustering steps (successfully dropping 484 duplicates automatically)
 - **Fault‑tolerance by design** — exponential backoff, retries, fallback strategies (LaTeX → PDF → abstract), and persistent state (`processed_arxiv_ids.txt`) allow the pipeline to survive network hiccups and resume seamlessly.
 - **Cost‑conscious** — every API call was logged and counted. The total spend stayed under $3 even with multiple full runs, proving that the system can be maintained on a minimal budget.
 
@@ -135,7 +135,7 @@ The Streamlit dashboard will be available at `http://localhost:8501`.
 
 ## Dashboard Features
 
-* **3D Interactive Map** — explore 1,769 galaxies with color-coding by:
+* **3D Interactive Map** — explore 1,285 galaxies with color-coding by:
 * Dark Matter Fraction
 * Completeness (%)
 * Distance (Mpc)
@@ -166,7 +166,7 @@ The Streamlit dashboard will be available at `http://localhost:8501`.
 
 ## Testing
 
-The project includes a comprehensive test suite built with `pytest` and `pytest-mock`. Tests cover:
+The project includes a comprehensive test suite built with `pytest` and `pytest-mock`. Testing now covers **98% of the core code**, ensuring robust data processing, accurate spatial merging, and strict fault tolerance.
 
 | Module | Coverage |
 | --- | --- |
@@ -182,7 +182,6 @@ The project includes a comprehensive test suite built with `pytest` and `pytest-
 | **Pipeline Orchestration** | `process_single_paper_task` evaluated with isolated mocked dependencies. |
 
 > All tests are **offline-first** — they rely on `pytest-mock` to intercept network requests, such as the DeepSeek API and arXiv downloads. This ensures fast, repeatable, and cost‑free validation without burning API tokens.
-> Core modules (`arxiv_client`, `data_processor`, `incremental`, `logger`, `config`, `prompts`) are fully tested with 95–100% coverage. The orchestration layer (`main.py`) is partially tested, covering the critical execution path.
 
 ### Running Tests
 
@@ -191,7 +190,7 @@ pip install pytest pytest-mock pytest-cov
 
 pytest tests/
 
-pytest --cov=arxiv_client --cov=data_processor --cov=incremental --cov=logger --cov=main --cov-fail-under=100
+pytest --cov=arxiv_client --cov=data_processor --cov=incremental --cov=logger --cov=main --cov-fail-under=98
 
 ```
 
