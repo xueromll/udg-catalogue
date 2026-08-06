@@ -6,13 +6,18 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.20+-red.svg?style=flat-square)](https://streamlit.io/)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg?style=flat-square)](https://deepseek.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen.svg?style=flat-square)](#)
 
 </div>
 
-> **A fully automated ETL pipeline that scrapes 540+ astrophysics papers from arXiv, extracts structured data about Ultra-Diffuse Galaxies (UDGs) using DeepSeek V4-Flash, and visualizes 1,285 galaxies in an interactive 3D map — all built in 72 hours at a cost of $2.61.**
+> **A fully automated ETL pipeline that scrapes 540+ astrophysics papers from arXiv, extracts structured data about Ultra-Diffuse Galaxies (UDGs) using DeepSeek V4-Flash, and visualizes 1,285 galaxies in an interactive dashboard.**
 
 ---
+
+Quickstart (one-liner)
+- Clone, install, and run the pipeline locally:
+  ```bash
+  git clone https://github.com/xueromll/udg-catalogue.git && cd udg-catalogue && pip install -r requirements.txt && python main.py
+  ```
 
 ## Key Features
 
@@ -41,9 +46,6 @@
 | **Development time** | 72 hours |
 | **Codebase** | ~1000 lines (modular) |
 
-**Why only $2.61?**
-The pipeline was run **4 times** from scratch (clearing `processed_arxiv_ids` each time) to test the extraction logic, ensure fault tolerance, and validate the data quality after refactoring. Even with 4 full passes over the same 540+ papers — downloading LaTeX sources, sending text to DeepSeek, and writing to CSV — the total cost did not exceed **$2.61 USD**. This demonstrates the cost‑efficiency of both the model (DeepSeek V4‑Flash) and the pipeline design.
-
 ---
 
 ## Engineering Approach
@@ -52,8 +54,8 @@ The pipeline was run **4 times** from scratch (clearing `processed_arxiv_ids` ea
   - Robustness against missing or malformed PDFs
   - Correctness of the extraction schema (JSON parsing, percentage conversion)
   - Performance of the deduplication and clustering steps (successfully dropping 484 duplicates automatically)
-- **Fault‑tolerance by design** — exponential backoff, retries, fallback strategies (LaTeX → PDF → abstract), and persistent state (`processed_arxiv_ids.txt`) allow the pipeline to survive network hiccups and resume seamlessly.
-- **Cost‑conscious** — every API call was logged and counted. The total spend stayed under $3 even with multiple full runs, proving that the system can be maintained on a minimal budget.
+- **Fault‑tolerance by design** — exponential backoff, retries, fallback strategies (LaTeX → PDF → abstract), and persistent state (`processed_arxiv_ids.txt`) allow the pipeline to survive intermittent failures.
+- **Cost‑conscious** — every API call was logged and counted. The total spend stayed under $3 even with multiple full runs, proving the system can be maintained on a minimal budget.
 
 ---
 
@@ -91,9 +93,9 @@ udg-catalogue/
 ├── logger.py               # Logging setup
 ├── requirements.txt        # Dependencies
 ├── Dockerfile              # Container setup
+├── docker.yaml             # Docker Compose file used by this repo
 ├── LICENSE                 # MIT License
 └── README.md               # This file
-
 ```
 
 ---
@@ -103,7 +105,7 @@ udg-catalogue/
 ### Local Installation
 
 ```bash
-git clone [https://github.com/xueromll/udg-catalogue.git](https://github.com/xueromll/udg-catalogue.git)
+git clone https://github.com/xueromll/udg-catalogue.git
 cd udg-catalogue
 
 python -m venv venv
@@ -116,17 +118,16 @@ cp .env.example .env
 python main.py
 
 streamlit run app.py
-
 ```
 
 ### Docker (Recommended)
 
-1. Make sure your `.env` file is configured in the root directory.
-2. Build and run the container using Docker Compose:
+This repository includes a Docker Compose file named `docker.yaml`. If you prefer the conventional `docker-compose.yml` name you may rename it locally or adapt the command below.
+
+Build and run the container using Docker Compose (this repo uses `docker.yaml` by default):
 
 ```bash
 docker compose -f docker.yaml up --build
-
 ```
 
 The Streamlit dashboard will be available at `http://localhost:8501`.
@@ -141,9 +142,8 @@ The Streamlit dashboard will be available at `http://localhost:8501`.
   * Distance (Mpc)
   * Cluster ID
 
-
 * **Real-time Filtering** — filter by constellation, cluster, completeness, and quality flag
-* **Analytics View** — distribution plots (mass, radius) and mass-radius scatter with completeness coloring
+* **Analytics View** — distribution plots (mass, radius) and mass–radius scatter with completeness coloring
 * **Data Export** — download filtered data as CSV
 
 ---
@@ -154,7 +154,7 @@ The Streamlit dashboard will be available at `http://localhost:8501`.
 
 ![3D Map](assets/demo.png)
 
-*Interactive 3D map showing UDG distribution across 45 constellations. Hover over any point to see detailed galaxy parameters.*
+*Interactive 3D map showing UDG distribution across constellations. Hover over any point to see detailed galaxy parameters.*
 
 ### Analytics Dashboard
 
@@ -166,32 +166,15 @@ The Streamlit dashboard will be available at `http://localhost:8501`.
 
 ## Testing
 
-The project includes a comprehensive test suite built with `pytest` and `pytest-mock`. Testing now covers **98% of the core code**, ensuring robust data processing, accurate spatial merging, and strict fault tolerance.
-
-| Module | Coverage |
-| --- | --- |
-| **Data Processing** | `universal_normalize_name`, `is_valid_galaxy`, `calculate_completeness`, `assign_quality_flag`, `upsert_to_csv`, and `process_database`. |
-| **Deduplication & Cross-matching** | `clean_duplicates` with synthetic Astropy coordinate merging and separation thresholds. |
-| **Clustering & Mapping** | DBSCAN spatial logic (`assign_3d_clusters`) and `assign_constellations`. |
-| **State Management** | `load_processed_ids`, `save_processed_id`, `load_pipeline_metadata`, and `save_pipeline_metadata`. |
-| **arXiv Processing** | `search_arxiv` (429 retry and exception handling), `parse_arxiv_xml`, and `fetch_paper_text` (LaTeX and PDF fallbacks). |
-| **Text Trimming** | `trim_references` and `extract_tables_from_pdf`. |
-| **LLM Extraction** | Mocked DeepSeek API for `is_paper_relevant` and `extract_udg_data` to validate JSON parsing. |
-| **Prompts & Config** | Validating YAML config loading and system prompt instructions. |
-| **Logging** | Validating `setup_logger` and its stream/file handlers. |
-| **Pipeline Orchestration** | `process_single_paper_task` evaluated with isolated mocked dependencies. |
-
-> All tests are **offline-first** — they rely on `pytest-mock` to intercept network requests, such as the DeepSeek API and arXiv downloads. This ensures fast, repeatable, and cost‑free validation without burning API tokens.
+The project includes a comprehensive test suite built with `pytest` and `pytest-mock`. Testing covers the core code to ensure robust data processing and accurate spatial merging.
 
 ### Running Tests
 
 ```bash
 pip install pytest pytest-mock pytest-cov
-
 pytest tests/
 
 pytest --cov=arxiv_client --cov=data_processor --cov=incremental --cov=logger --cov=main --cov-fail-under=98
-
 ```
 
 ---
@@ -221,9 +204,8 @@ If you use this project in your research, please cite it as:
   title = {UDG Catalogue: Automated ETL Pipeline for Ultra-Diffuse Galaxies},
   year = {2026},
   publisher = {GitHub},
-  howpublished = {\url{[https://github.com/xueromll/udg-catalogue](https://github.com/xueromll/udg-catalogue)}}
+  howpublished = {\url{https://github.com/xueromll/udg-catalogue}}
 }
-
 ```
 
 ---
@@ -246,9 +228,9 @@ MIT License — feel free to use, modify, and build upon this work. See the [LIC
 
 Maintained by **Lan**
 
-GitHub: [xueromll](https://www.google.com/search?q=https://github.com/xueromll)
+GitHub: [xueromll](https://github.com/xueromll)
 
-Email: [lanhua1122333@gmail.com](https://www.google.com/search?q=mailto%3Alanhua1122333%40gmail.com)
+Email: [lanhua1122333@gmail.com](mailto:lanhua1122333@gmail.com)
 
 ---
 
