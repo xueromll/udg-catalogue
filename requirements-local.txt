@@ -1,0 +1,2 @@
+-r requirements-app.txt
+-e ../../sci-etl-core[async,llm,pdf,cluster]

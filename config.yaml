@@ -1,0 +1,34 @@
+llm:
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-v4-flash"
+  timeout: 120
+
+http:
+  user_agent: "UDG-ResearchScript/1.0 (lanhua1122333@gmail.com)"
+  max_retries: 4
+  backoff_factor: 5.0
+  timeout: 25
+
+pipeline:
+  search_query: "cat:astro-ph.GA AND abs:ultra-diffuse"
+  max_records: 500
+  page_size: 100
+  search_delay: 3.0
+  sleep_between: 5.0
+  max_workers: 6
+
+paths:
+  raw_catalogue: "udg_database.csv"
+  sorted_catalogue: "udg_database_sorted.csv"
+  processed_ids: "processed_arxiv_ids.txt"
+  pipeline_metadata: "pipeline_meta.json"
+  html_map: "udg_3d_map.html"
+  analytics_dir: "analysis"
+  log_file: "pipeline.log"
+
+clustering:
+  max_distance_mpc: 5.0
+  min_samples: 2
+
+deduplication:
+  max_separation_arcsec: 3.0

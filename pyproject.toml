@@ -1,0 +1,12 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+
+[tool.coverage.run]
+source = ["udg_catalogue", "main"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
+exclude_also = ['if __name__ == "__main__":']
