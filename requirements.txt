@@ -1,2 +1,2 @@
 -r requirements-app.txt
-./vendor/sci_etl_core-0.1.0-py3-none-any.whl[async,llm,pdf,cluster]
+sci-etl-core[async,llm,pdf,cluster]>=0.2.0,<0.3
