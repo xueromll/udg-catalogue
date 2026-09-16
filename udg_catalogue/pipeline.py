@@ -18,6 +18,7 @@ from sci_etl_core.parsers import LatexTarballParser, PdfPlumberParser
 
 from udg_catalogue.config import FRACTION_BOUNDS, KEY_COLUMN, MEASUREMENT_FIELDS, CatalogueConfig
 from udg_catalogue.naming import GalaxyNameNormalizer
+from udg_catalogue.progress import LoggingExtractor, LoggingParser, LoggingRelevanceFilter, PipelineEventLogger
 from udg_catalogue.prompts import EXTRACTION_PROMPT, RELEVANCE_PROMPT
 from udg_catalogue.validation import ValidatedEntityExtractor, build_galaxy_validator
 
@@ -41,8 +42,8 @@ def build_pipeline(
 ) -> AsyncETLPipeline:
     extractor = AsyncArxivExtractor(
         client=http_client,
-        pdf_parser=PdfPlumberParser(),
-        latex_parser=LatexTarballParser(),
+        pdf_parser=LoggingParser(PdfPlumberParser(), "PDF", logger.info),
+        latex_parser=LoggingParser(LatexTarballParser(), "LaTeX source", logger.info),
         max_retries=config.http.max_retries,
         backoff_factor=config.http.backoff_factor,
         sleep_before_search=config.pipeline.search_delay,
@@ -59,8 +60,11 @@ def build_pipeline(
         logger=logger.info,
     )
     return AsyncETLPipeline(
-        extractor=extractor,
-        relevance_filter=AsyncLLMRelevanceFilter(llm_client=llm_client, system_prompt=RELEVANCE_PROMPT),
+        extractor=LoggingExtractor(extractor, logger.info),
+        relevance_filter=LoggingRelevanceFilter(
+            AsyncLLMRelevanceFilter(llm_client=llm_client, system_prompt=RELEVANCE_PROMPT),
+            logger.info,
+        ),
         entity_extractor=entity_extractor,
         exporter=build_catalogue_exporter(),
         state_manager=AsyncFileStateManager(config.paths.processed_ids, config.paths.pipeline_metadata),
@@ -68,6 +72,8 @@ def build_pipeline(
         max_concurrency=config.pipeline.max_workers,
         logger=logger.warning,
         closeables=[http_client, llm_client],
+        on_event=PipelineEventLogger(logger.info, logger.warning),
+        usage_sources=[llm_client],
     )
 
 

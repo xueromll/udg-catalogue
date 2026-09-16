@@ -1,0 +1,2763 @@
+=== FILE: ./app.py ===
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+from sci_etl_core import configure_logging
+
+from udg_catalogue.analytics import effective_radius_histogram, mass_radius_scatter, stellar_mass_histogram
+from udg_catalogue.config import CatalogueConfig, load_catalogue_config
+from udg_catalogue.maps import build_3d_figure, cluster_label, prepare_map_frame
+from udg_catalogue.postprocess import build_sorted_catalogue, read_catalogue
+
+ALL = "All"
+LOGGER_NAME = "UDGPipeline"
+TABLE_VIEW = "Data Table"
+ANALYTICS_VIEW = "Analytics"
+PAGE_SIZES = [10, 50, 100]
+COLOR_OPTIONS = {
+    "Dark Matter Fraction": "dark_matter_fraction",
+    "Completeness (%)": "completeness_pct",
+    "Distance (Mpc)": "distance_mpc",
+    "Cluster ID": "cluster_id",
+}
+
+
+@st.cache_data
+def load_catalogue(path: str, modified_at: float) -> pd.DataFrame:
+    return read_catalogue(Path(path))
+
+
+@st.cache_data
+def filter_catalogue(
+    catalogue: pd.DataFrame,
+    constellation: str,
+    cluster: str | int,
+    min_completeness: float,
+    flag: str,
+) -> pd.DataFrame:
+    filtered = catalogue
+    if constellation != ALL:
+        filtered = filtered[filtered["constellation"] == constellation]
+    if cluster != ALL:
+        filtered = filtered[filtered["cluster_id"] == cluster]
+    filtered = filtered[filtered["completeness_pct"] >= min_completeness]
+    if flag != ALL:
+        filtered = filtered[filtered["quality_flag"] == flag]
+    return filtered
+
+
+def current_catalogue(config: CatalogueConfig) -> pd.DataFrame:
+    path = config.paths.sorted_catalogue
+    if not path.is_file():
+        return pd.DataFrame()
+    return load_catalogue(str(path), path.stat().st_mtime)
+
+
+def refresh_catalogue(config: CatalogueConfig) -> None:
+    with st.spinner("Processing data..."):
+        try:
+            log = configure_logging(LOGGER_NAME, config.paths.log_file)
+            rebuilt = build_sorted_catalogue(config, log.info)
+        except Exception as error:
+            st.sidebar.error(f"Error updating data: {error}")
+            return
+    if rebuilt is None:
+        st.sidebar.error("Raw catalogue not found. Run the pipeline first.")
+        return
+    st.cache_data.clear()
+    st.rerun()
+
+
+def sidebar_filters(catalogue: pd.DataFrame) -> tuple[str, str | int, float, str]:
+    constellations = [ALL, *sorted(catalogue["constellation"].dropna().unique().tolist())]
+    clusters = [ALL, *sorted(catalogue["cluster_id"].dropna().astype(int).unique().tolist())]
+    constellation = st.sidebar.selectbox("Constellation", constellations)
+    cluster = st.sidebar.selectbox("Cluster ID", clusters)
+    min_completeness = st.sidebar.slider("Minimum Completeness (%)", 0.0, 100.0, 0.0, 10.0)
+    flag = ALL
+    if "quality_flag" in catalogue.columns:
+        flags = [ALL, *sorted(catalogue["quality_flag"].dropna().unique().tolist())]
+        flag = st.sidebar.selectbox("Quality Flag", flags)
+    return constellation, cluster, min_completeness, flag
+
+
+def render_map(filtered: pd.DataFrame) -> None:
+    with st.expander("3D Galaxy Distribution (Click to expand/collapse)", expanded=True):
+        color_label = st.selectbox("Select color mapping parameter:", list(COLOR_OPTIONS))
+        map_frame = prepare_map_frame(filtered)
+        if map_frame.empty:
+            st.info("No spatial data available for 3D mapping.")
+            return
+        color_column = COLOR_OPTIONS[color_label]
+        color_range = None
+        if color_column == "cluster_id":
+            map_frame["cluster_label"] = map_frame["cluster_id"].map(cluster_label)
+            color_column = "cluster_label"
+        elif color_column == "dark_matter_fraction":
+            color_range = (0.0, 1.0)
+        elif color_column == "distance_mpc":
+            color_range = (map_frame["distance_mpc"].min(), map_frame["distance_mpc"].quantile(0.99))
+        figure = build_3d_figure(
+            map_frame,
+            color_column=color_column,
+            color_label=color_label,
+            color_range=color_range,
+            title=f"3D Map (Color: {color_label})",
+        )
+        st.plotly_chart(figure, width="stretch")
+
+
+def render_table(filtered: pd.DataFrame) -> None:
+    st.subheader("Data Table")
+    if "current_page" not in st.session_state:
+        st.session_state.current_page = 1
+
+    def reset_page() -> None:
+        st.session_state.current_page = 1
+
+    def previous_page() -> None:
+        st.session_state.current_page -= 1
+
+    def next_page() -> None:
+        st.session_state.current_page += 1
+
+    size_column, info_column, previous_column, next_column = st.columns([1, 2, 1, 1])
+    with size_column:
+        page_size = st.selectbox("Objects per page:", options=PAGE_SIZES, index=0, on_change=reset_page)
+    total_pages = max(1, (len(filtered) - 1) // page_size + 1)
+    st.session_state.current_page = min(st.session_state.current_page, total_pages)
+    with info_column:
+        st.markdown(
+            "<div style='text-align: center; margin-top: 32px;'>"
+            f"Page <b>{st.session_state.current_page}</b> of <b>{total_pages}</b></div>",
+            unsafe_allow_html=True,
+        )
+    with previous_column:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        st.button(
+            "◀ Prev",
+            on_click=previous_page,
+            disabled=st.session_state.current_page == 1,
+            width="stretch",
+        )
+    with next_column:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        st.button(
+            "Next ▶",
+            on_click=next_page,
+            disabled=st.session_state.current_page == total_pages,
+            width="stretch",
+        )
+    start = (st.session_state.current_page - 1) * page_size
+    st.dataframe(filtered.iloc[start : start + page_size], width="stretch", hide_index=True)
+
+
+def render_figure(figure, empty_message: str) -> None:
+    if figure is None:
+        st.info(empty_message)
+    else:
+        st.pyplot(figure)
+
+
+def render_analytics(filtered: pd.DataFrame) -> None:
+    st.subheader("Statistical Analytics")
+    mass_column, radius_column = st.columns(2)
+    with mass_column:
+        render_figure(stellar_mass_histogram(filtered), "Not enough data to plot Stellar Mass.")
+    with radius_column:
+        render_figure(effective_radius_histogram(filtered), "Not enough data to plot Effective Radius.")
+    render_figure(mass_radius_scatter(filtered), "Not enough data to build Mass vs Radius scatter plot.")
+
+
+def main() -> None:
+    st.set_page_config(page_title="UDG Research Dashboard", layout="wide")
+    config = load_catalogue_config()
+    catalogue = current_catalogue(config)
+
+    st.title("Ultra-Diffuse Galaxies (UDG) Research Dashboard")
+    st.markdown("Interactive dashboard for analyzing ultra-diffuse galaxies.")
+    if catalogue.empty:
+        st.warning("Database is empty or file not found. Run the pipeline.")
+        return
+
+    st.sidebar.header("Navigation & Filters")
+    if st.sidebar.button("Refresh Data", width="stretch"):
+        refresh_catalogue(config)
+    st.sidebar.divider()
+    view_mode = st.sidebar.radio(
+        "Display Mode:",
+        options=[TABLE_VIEW, ANALYTICS_VIEW],
+        index=0,
+        help="Switch between tabular view and statistical plots",
+    )
+    st.sidebar.divider()
+
+    filtered = filter_catalogue(catalogue, *sidebar_filters(catalogue))
+    st.sidebar.markdown(f"**Objects found:** {len(filtered)} out of {len(catalogue)}")
+    st.sidebar.download_button(
+        label="Download Filtered CSV",
+        data=filtered.to_csv(index=False).encode("utf-8"),
+        file_name="filtered_udg_database.csv",
+        mime="text/csv",
+        width="stretch",
+    )
+
+    render_map(filtered)
+    st.divider()
+    if filtered.empty:
+        st.warning("No data matches the selected filters. Please adjust the parameters in the sidebar.")
+    elif view_mode == TABLE_VIEW:
+        render_table(filtered)
+    else:
+        render_analytics(filtered)
+
+
+main()
+
+
+
+=== FILE: ./code.txt ===
+
+
+
+=== FILE: ./CODE_OF_CONDUCT.md ===
+# Contributor Covenant Code of Conduct
+
+## Our Pledge
+
+In the interest of fostering an open and welcoming environment, we as contributors and maintainers pledge to make participation in this project and our community a harassment-free experience for everyone.
+
+## Our Standards
+
+Examples of behavior that contributes to a positive environment include:
+
+- Using welcoming and inclusive language
+- Being respectful of differing viewpoints and experiences
+- Gracefully accepting constructive criticism
+- Focusing on what is best for the community
+
+Examples of unacceptable behavior by participants include:
+
+- The use of sexualized language or imagery and unwelcome sexual attention or advances
+- Trolling, insulting/derogatory comments, and personal or political attacks
+- Public or private harassment
+- Publishing others’ private information, such as a physical or electronic address, without explicit permission
+
+## Enforcement
+
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by contacting the project maintainers at lanhua1122333@gmail.com. All complaints will be reviewed and investigated and will result in a response that is deemed necessary and appropriate to the circumstances.
+
+## Scope
+
+This Code of Conduct applies both within project spaces and in public spaces when an individual is representing the project or its community.
+
+## Attribution
+
+This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 1.4, available at https://www.contributor-covenant.org/version/1/4/code-of-conduct.html
+
+
+
+=== FILE: ./config.yaml ===
+llm:
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-v4-flash"
+  timeout: 120
+
+http:
+  user_agent: "UDG-ResearchScript/1.0 (lanhua1122333@gmail.com)"
+  max_retries: 4
+  backoff_factor: 5.0
+  timeout: 25
+
+pipeline:
+  search_query: "cat:astro-ph.GA AND abs:ultra-diffuse"
+  max_records: 500
+  page_size: 100
+  search_delay: 3.0
+  sleep_between: 5.0
+  max_workers: 6
+
+paths:
+  raw_catalogue: "udg_database.csv"
+  sorted_catalogue: "udg_database_sorted.csv"
+  processed_ids: "processed_arxiv_ids.txt"
+  pipeline_metadata: "pipeline_meta.json"
+  html_map: "udg_3d_map.html"
+  analytics_dir: "analysis"
+  log_file: "pipeline.log"
+
+clustering:
+  max_distance_mpc: 5.0
+  min_samples: 2
+
+deduplication:
+  max_separation_arcsec: 3.0
+
+
+
+=== FILE: ./CONTRIBUTING.md ===
+# Contributing to UDG Catalogue
+
+Contributions of two kinds are welcome: **corrections to the catalogue** and **improvements to the software**. By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Contents
+
+1. [Reporting Catalogue Errors](#1-reporting-catalogue-errors)
+2. [Reporting Software Defects](#2-reporting-software-defects)
+3. [Proposing Features](#3-proposing-features)
+4. [Code Organisation](#4-code-organisation)
+5. [Development Environment](#5-development-environment)
+6. [Changes That Affect the Catalogue](#6-changes-that-affect-the-catalogue)
+7. [Testing Requirements](#7-testing-requirements)
+8. [Style and Documentation](#8-style-and-documentation)
+9. [Submitting a Pull Request](#9-submitting-a-pull-request)
+
+---
+
+## 1. Reporting Catalogue Errors
+
+Catalogue values are extracted automatically and may contain errors (see [Known Limitations](README.md#known-limitations) in the README). If you find an incorrect, duplicated or misattributed entry, please open an issue with:
+
+| Field | Example |
+|---|---|
+| Object designation, as listed in the catalogue | `DF44` |
+| Affected column(s) | `stellar_mass_solar` |
+| Catalogue value | `3.0e9` |
+| Correct value, with units | `3.0e8 M☉` |
+| Reference | arXiv identifier or DOI, plus the table, figure or page |
+| Nature of the problem | wrong value, unit error, duplicate entry, not a UDG, simulated object |
+
+A reference to the original publication is required. Corrections that cite no source cannot be verified.
+
+## 2. Reporting Software Defects
+
+Open an issue using the bug report template and include:
+
+- a concise, descriptive title;
+- the steps needed to reproduce the problem;
+- the expected and the observed behaviour;
+- relevant log excerpts from `pipeline.log` or tracebacks, in code blocks;
+- your operating system, Python version and commit hash.
+
+Remove API keys from anything you paste.
+
+## 3. Proposing Features
+
+Open an issue describing the problem the feature addresses, the proposed behaviour and any alternatives you considered. For changes that alter the scientific content of the catalogue, please discuss them in an issue before starting the implementation.
+
+## 4. Code Organisation
+
+The generic ETL machinery lives in [sci-etl-core](https://github.com/xueromll/sci-etl-core). This repository contains only what is specific to ultra-diffuse galaxies, implemented as plug-ins to the library's interfaces:
+
+| Module | Responsibility |
+|---|---|
+| `udg_catalogue/prompts.py` | Relevance and extraction prompts |
+| `udg_catalogue/naming.py` | `KeyNormalizer` deciding when two designations refer to the same object |
+| `udg_catalogue/validation.py` | `RecordValidator` rules applied to every extracted galaxy |
+| `udg_catalogue/astrometry.py` | `NeighborMatcher`, `FeatureExtractor` and `Processor` implementations built on astropy |
+| `udg_catalogue/postprocess.py` | `ProcessorChain` producing the sorted catalogue |
+| `udg_catalogue/pipeline.py` | Assembly of the sci-etl-core ingestion pipeline |
+| `udg_catalogue/maps.py`, `udg_catalogue/analytics.py` | Figures shared by `main.py` and the dashboard |
+
+Changes that would benefit any scientific corpus, not just this catalogue, belong in sci-etl-core. Examples include new extractors, parsers, exporters and generic processors.
+
+## 5. Development Environment
+
+```bash
+git clone https://github.com/<your-username>/udg-catalogue.git
+cd udg-catalogue
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+pytest --cov
+```
+
+On Windows, activate the environment with `.venv\Scripts\activate`.
+
+The raw ingestion output `udg_database.csv` is not version-controlled. On a fresh clone, `python main.py --skip-ingestion` therefore has no input to rebuild from. The dashboard (`streamlit run app.py`) does work on a fresh clone, because it reads the released `udg_database_sorted.csv`.
+
+To develop sci-etl-core alongside this project, install `requirements-local.txt` instead of `requirements.txt`. It installs a sibling checkout of the library in editable mode.
+
+## 6. Changes That Affect the Catalogue
+
+Some changes alter which objects are catalogued or what values they carry: prompts, validation rules, name normalisation, cross-match radius, clustering parameters and quality-flag thresholds. For these changes, the pull request should state:
+
+- **Motivation**, with references to the literature where a threshold or definition is involved;
+- **Effect on the released catalogue**, measured by rebuilding the sorted catalogue before and after the change and reporting the differences in row count, quality-flag distribution, number of spatial groups and any objects merged or split;
+- **Tests** that pin the new behaviour, such as designations that must or must not resolve to the same key.
+
+## 7. Testing Requirements
+
+- Tests use `pytest` and `pytest-cov`.
+- **All tests must run offline.** Replace arXiv with `httpx.MockTransport` and DeepSeek with a scripted `AsyncLLMClient`, as in `tests/test_pipeline.py`.
+- Line coverage of `udg_catalogue` and `main.py` must remain at 100%. The threshold is enforced by `pyproject.toml` and by continuous integration.
+
+```bash
+pytest --cov
+```
+
+## 8. Style and Documentation
+
+- Follow [PEP 8](https://peps.python.org/pep-0008/) and annotate functions with type hints.
+- Keep functions small and focused. Express intent through clear names and structure rather than explanatory comments.
+- Update the README when behaviour, parameters, outputs or catalogue statistics change, and keep the methodology section consistent with the code.
+
+## 9. Submitting a Pull Request
+
+1. Fork the repository and create a branch from `main`:
+
+   ```bash
+   git checkout -b feat/short-description
+   ```
+
+2. Make your changes, then run the test suite locally.
+3. Commit using [Conventional Commits](https://www.conventionalcommits.org/):
+
+   ```bash
+   git commit -m "feat(validation): reject galaxies without a catalogue designation"
+   ```
+
+4. Push the branch and open a pull request against `main`. Complete the pull request template, and link the related issue.
+
+## Questions
+
+Please open an issue, or contact the maintainer at [lanhua1122333@gmail.com](mailto:lanhua1122333@gmail.com).
+
+
+
+=== FILE: ./docker.yaml ===
+version: '3.8'
+
+services:
+  udg-pipeline:
+    build: .
+    container_name: udg_research_app
+    ports:
+      - "8501:8501"
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+
+=== FILE: ./Dockerfile ===
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-app.txt ./
+COPY vendor/ vendor/
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+
+
+
+=== FILE: ./main.py ===
+from __future__ import annotations
+
+import argparse
+import asyncio
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+
+from sci_etl_core import PipelineAborted, configure_logging
+
+from udg_catalogue.analytics import generate_analytics_report
+from udg_catalogue.config import API_KEY_ENV_VAR, DEFAULT_CONFIG_PATH, load_catalogue_config
+from udg_catalogue.maps import write_3d_map
+from udg_catalogue.pipeline import run_ingestion
+from udg_catalogue.postprocess import build_sorted_catalogue
+
+EXIT_OK = 0
+EXIT_INGESTION_ABORTED = 1
+EXIT_MISSING_API_KEY = 2
+LOGGER_NAME = "UDGPipeline"
+
+
+def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build the ultra-diffuse galaxy catalogue from arXiv papers.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="Path to the YAML configuration file.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue from the saved listing offset instead of rescanning from the newest submissions.",
+    )
+    parser.add_argument(
+        "--skip-ingestion",
+        action="store_true",
+        help="Only rebuild the sorted catalogue, analytics report and 3D map from existing data.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = parse_arguments(argv)
+    config = load_catalogue_config(arguments.config)
+    log = configure_logging(LOGGER_NAME, config.paths.log_file)
+    exit_code = EXIT_OK
+
+    if not arguments.skip_ingestion:
+        if not config.llm.api_key.get_secret_value():
+            log.error(f"{API_KEY_ENV_VAR} is not set; add it to .env or the environment")
+            return EXIT_MISSING_API_KEY
+        start_index = None if arguments.resume else 0
+        try:
+            processed = asyncio.run(run_ingestion(config, log, start_index))
+            log.info(f"Relevant papers processed: {processed}")
+        except PipelineAborted as aborted:
+            log.error(
+                f"Ingestion aborted after {aborted.partial_count} relevant papers: "
+                f"{aborted} (cause: {aborted.__cause__!r})"
+            )
+            exit_code = EXIT_INGESTION_ABORTED
+
+    catalogue = build_sorted_catalogue(config, log.info)
+    if catalogue is not None:
+        generate_analytics_report(catalogue, config.paths.analytics_dir, log.info)
+        write_3d_map(catalogue, config.paths.html_map, log.info)
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+
+=== FILE: ./pyproject.toml ===
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+
+[tool.coverage.run]
+source = ["udg_catalogue", "main"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
+exclude_also = ['if __name__ == "__main__":']
+
+
+
+=== FILE: ./README.md ===
+# UDG Catalogue — Automated ETL Pipeline for Ultra-Diffuse Galaxies
+
+<div align="center">
+
+[![Python](https://img.shields.io/badge/Python-3.11-blue.svg?style=flat-square)](https://www.python.org/)
+[![sci-etl-core](https://img.shields.io/badge/built_on-sci--etl--core_0.1-0b7285.svg?style=flat-square)](https://github.com/xueromll/sci-etl-core)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.63-red.svg?style=flat-square)](https://streamlit.io/)
+[![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg?style=flat-square)](https://deepseek.com/)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg?style=flat-square)](#testing)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+
+</div>
+
+> **An automated pipeline that screens astrophysics papers on arXiv and extracts measurements of ultra-diffuse galaxies (UDGs) with DeepSeek V4-Flash. It publishes the results as a cross-matched catalogue of 1,285 objects, explorable through an interactive 3D map and a Streamlit dashboard.**
+>
+> The ETL machinery comes from [sci-etl-core](https://github.com/xueromll/sci-etl-core): arXiv access, LLM steps, CSV upserts, resumable state and dataframe processors. This repository holds the astronomy: prompts, galaxy naming and validation rules, sky-position matching, clustering features and the dashboard.
+
+---
+
+## Quickstart
+
+```bash
+git clone https://github.com/xueromll/udg-catalogue.git && cd udg-catalogue
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python main.py
+streamlit run app.py
+```
+
+Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also works without it, because it reads the committed `udg_database_sorted.csv`. For all options, see [Installation and Usage](#installation-and-usage).
+
+## Key Features
+
+- **Literature screening.** An LLM reads each title and abstract and excludes papers based purely on simulations or theory, such as IllustrisTNG, FIRE or EAGLE studies.
+- **Multi-format extraction.** The pipeline reads LaTeX sources first (tarballs or single gzipped files, assembled in document order), then PDFs including their tables, and uses the abstract only as a last resort.
+- **Structured LLM extraction.** DeepSeek V4-Flash runs in JSON mode, and every extracted galaxy must pass validation rules before it is stored.
+- **Astrometric cross-identification.** Galaxy names are normalised, and records within 3″ on the sky are merged using astropy.
+- **Derived columns.** Each object gets a completeness score, a quality flag, its IAU constellation and a 3D spatial group from DBSCAN.
+- **Interactive exploration.** A Plotly 3D map and a Streamlit dashboard offer filtering, analytics and CSV export.
+- **Fault tolerance.** Requests are retried with backoff, and CSV and state writes are crash-safe. Papers that fail are retried on the next run instead of being marked done.
+- **Bounded async ingestion.** Up to six papers are processed at once.
+- **Container-ready.** A Dockerfile and a Compose file are included.
+
+---
+
+## Results at a Glance
+
+| Metric | Value |
+|--------|-------|
+| **arXiv submissions screened** | 540+ |
+| **Unique galaxies catalogued** | 1,285 |
+| **Objects with all six parameters (`Confirmed`)** | 66 (5.1%) |
+| **Objects with sky position and distance (3D map)** | 757 |
+| **3D spatial groups (DBSCAN)** | 56 |
+| **IAU constellations represented** | 43 |
+| **Median record completeness** | 66.7% |
+| **Literature snapshot** | 2026-08-05 |
+| **Total API cost (four full runs)** | US$2.61 |
+| **ETL framework** | sci-etl-core 0.1.0 |
+
+### Parameter coverage
+
+| Parameter | Column | Unit | Objects | Coverage | Median |
+|---|---|---|---:|---:|---:|
+| Right ascension, declination (ICRS) | `ra`, `dec` | deg | 1,004 | 78.1% | — |
+| Distance | `distance_mpc` | Mpc | 958 | 74.6% | 40.2 |
+| Effective radius | `effective_radius_kpc` | kpc | 997 | 77.6% | 1.74 |
+| Stellar mass | `stellar_mass_solar` | M☉ | 681 | 53.0% | 6.3 × 10⁷ |
+| Dark-matter fraction | `dark_matter_fraction` | — | 70 | 5.4% | 0.89 |
+
+---
+
+## How It Works
+
+```mermaid
+flowchart LR
+    A["arXiv query<br/>astro-ph.GA, abs: ultra-diffuse"] --> B{"LLM relevance screen<br/>title + abstract"}
+    B -- "simulation or theory" --> X["Recorded as screened"]
+    B -- "observational" --> C["Full text<br/>LaTeX, then PDF, then abstract"]
+    C --> D["LLM extraction<br/>JSON schema"]
+    D --> E["Validation"]
+    E --> F["Upsert by normalised name<br/>udg_database.csv"]
+    F --> G["Post-processing"]
+    G --> H["udg_database_sorted.csv<br/>figures, 3D map, dashboard"]
+```
+
+| Stage | What happens | Code |
+|---|---|---|
+| **Screening** | The query `cat:astro-ph.GA AND abs:ultra-diffuse` is paged from the newest submission. The LLM keeps papers with new observational UDG measurements. Every screened ID is saved and never screened again. | [pipeline.py](udg_catalogue/pipeline.py), [prompts.py](udg_catalogue/prompts.py) |
+| **Extraction** | For each galaxy, the LLM returns `galaxy_name`, `ra`, `dec`, `distance_mpc`, `effective_radius_kpc`, `stellar_mass_solar` and `dark_matter_fraction`. Percentages are converted to fractions, and values the paper doesn't report are `null`. | [prompts.py](udg_catalogue/prompts.py) |
+| **Validation** | A record is rejected if its name is missing or contains a simulation keyword as a whole word (e.g. `tng`, `mock`, `toy`). It is also rejected if RA/Dec fall outside [0°, 360°] / [−90°, 90°], or if all six measurements are empty. | [validation.py](udg_catalogue/validation.py) |
+| **Name matching** | Names are compared after normalisation: NFKC and case folding, punctuation removed, `Dragonfly` → `DF`, leading zeros stripped. So `DF 44`, `DF-44` and `Dragonfly 044` match, while `KDG 44` and `DF 44` stay distinct. A new record only fills a stored row's missing values and never overwrites them. | [naming.py](udg_catalogue/naming.py) |
+| **Sky matching** | Nearest neighbours are found with `SkyCoord.match_to_catalog_sky`. Rows within 3″ are merged, filling gaps without discarding values. | [astrometry.py](udg_catalogue/astrometry.py) |
+| **Post-processing** | The dark-matter fraction is clipped to [0, 1], then completeness, constellation, spatial group and quality flag are computed, and rows are sorted. | [postprocess.py](udg_catalogue/postprocess.py) |
+
+**Derived columns**
+
+- `completeness_pct` is the share of the six measurements that are present.
+- `quality_flag` is `Confirmed` at 100% completeness, `Needs Review` at ≥ 50% and `Low Confidence` below 50%. It reflects completeness only, not whether the object is a confirmed UDG.
+- `constellation` is the IAU constellation of the position, from `SkyCoord.get_constellation`.
+- `cluster_id` comes from DBSCAN (`eps = 5 Mpc`, `min_samples = 2`) run on heliocentric Cartesian coordinates $(D\cos\delta\cos\alpha,\ D\cos\delta\sin\alpha,\ D\sin\delta)$. It is −1 for ungrouped objects and for objects without a position or distance.
+
+---
+
+## Catalogue Schema
+
+`udg_database_sorted.csv` has one row per object. Rows are sorted by completeness (descending), then by constellation, cluster and name.
+
+| Column | Type | Unit | Description |
+|---|---|---|---|
+| `galaxy_name` | string | — | Designation as first extracted |
+| `completeness_pct` | float | % | Share of the six measurements present |
+| `quality_flag` | string | — | `Confirmed`, `Needs Review` or `Low Confidence` |
+| `constellation` | string | — | IAU constellation, or `Unknown` without a valid position |
+| `cluster_id` | integer | — | DBSCAN group label; −1 if ungrouped |
+| `ra`, `dec` | float | deg | ICRS coordinates |
+| `distance_mpc` | float | Mpc | Distance |
+| `effective_radius_kpc` | float | kpc | Effective (half-light) radius |
+| `stellar_mass_solar` | float | M☉ | Stellar mass |
+| `dark_matter_fraction` | float | — | Dark-matter fraction in [0, 1] |
+
+Empty cells mean the value was not reported or could not be extracted.
+
+## Known Limitations
+
+Values are extracted automatically, so check them against the original papers before using them in quantitative work.
+
+- **Unchecked extraction.** No values were checked by hand, and a few are physically implausible (for example, one object has $M_\star > 10^{11}$ M☉).
+- **No provenance or uncertainties.** The catalogue does not record which paper each value came from, and error bars and upper limits are discarded.
+- **Mixed definitions.** Distance methods, photometric bands and dark-matter apertures differ between papers and are not recorded.
+- **First value wins.** When papers disagree, the value from the first paper processed is kept.
+- **No UDG definition imposed.** The catalogue takes each paper's classification as given and applies no size or surface-brightness cut, such as $R_\mathrm{e} \geq 1.5$ kpc and $\mu_{0,g} \geq 24$ mag arcsec⁻² ([van Dokkum et al. 2015](https://doi.org/10.1088/2041-8205/798/2/L45)).
+- **Spatial groups are not bound structures.** With `min_samples = 2`, any two objects within 5 Mpc form a group, and distance errors are often of that size.
+- **Remaining duplicates.** Name variants outside the normalisation rules (e.g. `N1052-DF2` and `NGC 1052-DF2`) are merged only when both records have coordinates.
+- **Not exactly reproducible.** LLM output varies between runs, so a rebuild gives a similar catalogue, not an identical file.
+
+---
+
+## Tech Stack
+
+| Domain | Technologies |
+|--------|-------------|
+| **Language** | Python 3.11 |
+| **ETL framework** | sci-etl-core (arXiv extraction, LLM steps, CSV upsert, state, processors) |
+| **AI / LLM** | DeepSeek V4-Flash through sci-etl-core's OpenAI-compatible client |
+| **Document parsing** | pdfplumber, LaTeX parsing in sci-etl-core |
+| **Data processing** | pandas, NumPy, scikit-learn (DBSCAN) |
+| **Astronomy** | astropy (coordinates, cross-matching, constellations) |
+| **Visualization** | Plotly, Matplotlib, seaborn |
+| **Dashboard** | Streamlit |
+| **Configuration** | YAML + `.env`, validated by Pydantic |
+| **Containerization** | Docker Compose |
+
+---
+
+## Project Structure
+
+```text
+udg-catalogue/
+├── main.py                  # Command-line entrypoint: ingest, post-process, report
+├── app.py                   # Streamlit dashboard
+├── config.yaml              # Pipeline, paths, clustering and deduplication settings
+├── udg_catalogue/
+│   ├── config.py            # CatalogueConfig, built on sci-etl-core's BaseAppConfig
+│   ├── pipeline.py          # Assembles the sci-etl-core ingestion pipeline
+│   ├── prompts.py           # LLM system prompts
+│   ├── naming.py            # Galaxy name normalizer used as the catalogue key
+│   ├── validation.py        # Rules every extracted galaxy must pass
+│   ├── astrometry.py        # Sky matching, 3D features, constellations, cross-matching
+│   ├── postprocess.py       # Processor chain that builds the sorted catalogue
+│   ├── maps.py              # Plotly 3D map shared by main.py and the dashboard
+│   └── analytics.py         # Statistical figures shared by main.py and the dashboard
+├── tests/                   # Offline test suite
+├── assets/                  # README screenshots
+├── vendor/                  # Pinned sci-etl-core wheel used by Docker and CI
+├── requirements.txt         # Runtime install with the vendored sci-etl-core
+├── requirements-local.txt   # Runtime install against a local sci-etl-core checkout
+├── requirements-app.txt     # Pinned third-party dependencies
+├── requirements-dev.txt     # Test dependencies
+├── Dockerfile               # Container setup
+├── docker.yaml              # Docker Compose file
+├── LICENSE                  # MIT License
+└── README.md                # This file
+```
+
+### Generated files
+
+| File | Committed | Contents |
+|---|---|---|
+| `udg_database_sorted.csv` | yes | Released catalogue |
+| `udg_database.csv` | no | Raw upserted extractions, input to post-processing |
+| `processed_arxiv_ids.txt`, `pipeline_meta.json` | no | Resumable pipeline state |
+| `analysis/*.png` | no | Statistical figures (300 dpi) |
+| `udg_3d_map.html` | no | Standalone 3D map |
+| `pipeline.log` | no | Run log |
+
+---
+
+## Installation and Usage
+
+### Local Installation
+
+```bash
+git clone https://github.com/xueromll/udg-catalogue.git
+cd udg-catalogue
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+On Windows, activate with `.venv\Scripts\activate`. Then set `DEEPSEEK_API_KEY` in `.env`. Run `pip install` from the project root, because pip resolves the vendored wheel's path from the current directory.
+
+### Running the Pipeline
+
+| Command | What it does |
+|---------|--------------|
+| `python main.py` | Rescans arXiv from the newest submission and skips papers already screened. Then rebuilds the sorted catalogue, analytics figures and 3D map. |
+| `python main.py --resume` | Continues from the listing offset saved in `pipeline_meta.json` instead of rescanning |
+| `python main.py --skip-ingestion` | Rebuilds the outputs from an existing `udg_database.csv` without calling arXiv or DeepSeek |
+| `python main.py --config other.yaml` | Uses another configuration file; its paths are resolved relative to that file |
+
+The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing. It is `1` when ingestion was aborted; the outputs are still rebuilt from the data already collected.
+
+### Configuration
+
+| Key in `config.yaml` | Default | Purpose |
+|---|---|---|
+| `pipeline.search_query` | `cat:astro-ph.GA AND abs:ultra-diffuse` | arXiv selection query |
+| `pipeline.max_records` | `500` | Relevant papers read in full per run |
+| `pipeline.max_workers` | `6` | Papers processed concurrently |
+| `http.max_retries` / `http.backoff_factor` | `4` / `5.0` | Retry policy for arXiv requests |
+| `deduplication.max_separation_arcsec` | `3.0` | Sky-matching radius |
+| `clustering.max_distance_mpc` | `5.0` | DBSCAN `eps` |
+| `clustering.min_samples` | `2` | DBSCAN `min_samples` |
+
+### Rebuilding the Catalogue From Scratch
+
+The committed catalogue was extracted before the migration to sci-etl-core. At that time, name matching could merge distinct galaxies that shared a catalogue number, such as `KDG 44` and `DF 44`, or `NGC 1052-DF2` and `NGC 1052-DF4`. The current code keeps such galaxies apart, but it cannot split rows that were merged earlier. To rebuild with the current rules, archive the raw data and state, then run the pipeline:
+
+```bash
+mkdir -p archive
+mv udg_database.csv processed_arxiv_ids.txt pipeline_meta.json archive/
+python main.py
+```
+
+A rebuild reprocesses every matching paper, so expect roughly the API cost of one full run (about US$0.65).
+
+### Docker (Recommended)
+
+```bash
+docker compose -f docker.yaml up --build
+```
+
+The dashboard is served at `http://localhost:8501`. The Compose file passes `DEEPSEEK_API_KEY` from your environment and mounts the project directory, so the container reads and writes the same catalogue files as a local run. To run the pipeline inside the container:
+
+```bash
+docker compose -f docker.yaml run --rm udg-pipeline python main.py
+```
+
+### Developing Against a Local sci-etl-core
+
+To change the library and this project together, install sci-etl-core in editable mode instead of from the vendored wheel. `requirements-local.txt` expects the checkout at `../../sci-etl-core`; adjust the path if yours lives elsewhere.
+
+```bash
+pip install -r requirements-local.txt
+python -c "import sci_etl_core; print(sci_etl_core.__file__)"
+```
+
+The second command should print a path inside your sci-etl-core checkout. An editable install records its absolute path, so reinstall if you move the checkout. To upgrade the vendored library, build a wheel from the release tag and update the file name in `requirements.txt`:
+
+```bash
+pip wheel --no-deps -w vendor path/to/sci-etl-core
+```
+
+---
+
+## Dashboard Features
+
+* **3D Interactive Map.** Explore the 757 galaxies that have a sky position and distance, colour-coded by:
+  * Dark Matter Fraction
+  * Completeness (%)
+  * Distance (Mpc)
+  * Cluster ID
+* **Filtering.** Filter by constellation, cluster, minimum completeness and quality flag.
+* **Data Table.** Paginated view with 10, 50 or 100 objects per page.
+* **Analytics View.** Stellar mass and effective radius distributions, plus a mass–radius scatter plot coloured by completeness, all computed on the filtered selection.
+* **Data Export.** Download the filtered selection as CSV.
+* **Refresh Data.** Re-run post-processing on `udg_database.csv` without ingesting new papers.
+
+The map's radial axis is scaled as √distance so that nearby and distant galaxies are visible together. Use the catalogue columns, not the plot axes, for distance measurements.
+
+---
+
+## Gallery
+
+### Galaxy Map
+
+![3D Map](assets/demo.png)
+
+*Interactive 3D map of UDGs with known position and distance. Hover over any point to see its constellation, cluster, completeness and measured parameters.*
+
+### Analytics Dashboard
+
+![Analytics](assets/analytics.png)
+
+*Statistical plots: stellar mass distribution, effective radius distribution and the mass–radius relation coloured by completeness.*
+
+---
+
+## Testing
+
+The test suite runs offline. arXiv is replaced by an in-memory Atom feed and e-print, DeepSeek by a scripted client, and the dashboard is exercised with Streamlit's `AppTest`.
+
+```bash
+pip install -r requirements-dev.txt
+pytest --cov
+```
+
+Coverage of `udg_catalogue` and `main.py` must stay at 100%. `pyproject.toml` enforces this, and CI checks it on every push and pull request.
+
+Beyond unit tests:
+
+- **End-to-end runs.** The pipeline was run four times from a cleared state. The runs checked robustness to missing or malformed PDFs, JSON schema parsing with percentage conversion, and the deduplication and clustering steps.
+- **Verified migration.** The move to sci-etl-core was checked by replaying the catalogue through the old and new code. The CSV upserts matched exactly. The sorted catalogue matched cell for cell, except for three rows with an invalid right ascension. The walkthrough is the case study in sci-etl-core's [MIGRATION.md](https://github.com/xueromll/sci-etl-core/blob/master/MIGRATION.md).
+
+---
+
+## Future Work
+
+* [x] Integrate **sci-etl-core** as a reusable library
+* [ ] Add support for other astronomical catalogues (e.g., dSph, LSB galaxies)
+* [ ] Deploy Streamlit dashboard to Streamlit Cloud
+* [ ] Add automated weekly updates via GitHub Actions
+
+---
+
+## Contributing
+
+Contributions are welcome, from corrections to catalogue values to code improvements. Please open an issue first to discuss what you'd like to change. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## Citation
+
+If you use this project in your research, please cite it, together with the original papers for any values you use:
+
+```bibtex
+@misc{udg_catalogue_2026,
+  author       = {Lan},
+  title        = {{UDG Catalogue}: Automated ETL Pipeline for Ultra-Diffuse Galaxies},
+  year         = {2026},
+  howpublished = {GitHub repository},
+  url          = {https://github.com/xueromll/udg-catalogue}
+}
+```
+
+---
+
+## License
+
+Released under the MIT License. See the [LICENSE](LICENSE) file for details. Measurements in the catalogue belong to the authors of the original publications.
+
+---
+
+## Acknowledgments
+
+* **arXiv:** thank you to arXiv for use of its open access interoperability
+* **Astropy:** a community-developed core Python package for astronomy
+* **DeepSeek:** for their LLM API
+* All the astrophysicists whose papers made this catalogue possible
+
+---
+
+## Contact
+
+Maintained by **Lan**
+
+GitHub: [xueromll](https://github.com/xueromll)
+
+Email: [lanhua1122333@gmail.com](mailto:lanhua1122333@gmail.com)
+
+
+
+=== FILE: ./requirements-app.txt ===
+aiofiles==25.1.0
+astropy==8.0.1
+httpx==0.28.1
+matplotlib==3.11.2
+numpy==2.4.6
+openai==3.13.0
+pandas==3.0.5
+pdfplumber==0.11.10
+plotly==7.0.0
+pydantic==2.13.5
+scikit-learn==1.9.1
+seaborn==0.13.2
+streamlit==1.63.0
+
+
+
+=== FILE: ./requirements-dev.txt ===
+pytest
+pytest-cov
+
+
+
+=== FILE: ./requirements-local.txt ===
+-r requirements-app.txt
+-e ../../sci-etl-core[async,llm,pdf,cluster]
+
+
+
+=== FILE: ./requirements.txt ===
+-r requirements-app.txt
+./vendor/sci_etl_core-0.1.0-py3-none-any.whl[async,llm,pdf,cluster]
+
+
+
+=== FILE: ./tests/conftest.py ===
+import matplotlib
+import pytest
+
+from udg_catalogue.config import API_KEY_ENV_VAR, CatalogueConfig
+
+matplotlib.use("Agg")
+
+
+@pytest.fixture(autouse=True)
+def isolated_api_key(monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "")
+    monkeypatch.delenv(API_KEY_ENV_VAR)
+
+
+@pytest.fixture
+def catalogue_config(tmp_path):
+    config = CatalogueConfig()
+    return config.model_copy(update={"paths": config.paths.anchored_at(tmp_path)})
+
+
+@pytest.fixture
+def ingestion_config(catalogue_config):
+    pipeline = catalogue_config.pipeline.model_copy(
+        update={"search_delay": 0.0, "sleep_between": 0.0, "page_size": 2, "max_records": 10}
+    )
+    return catalogue_config.model_copy(update={"pipeline": pipeline})
+
+
+
+=== FILE: ./tests/test_analytics.py ===
+import numpy as np
+import pandas as pd
+
+from udg_catalogue.analytics import (
+    REPORT_FIGURES,
+    effective_radius_histogram,
+    generate_analytics_report,
+    mass_radius_scatter,
+    stellar_mass_histogram,
+)
+
+
+def sample_catalogue():
+    return pd.DataFrame(
+        {
+            "stellar_mass_solar": [1e8, 3e8, np.nan, 0.0],
+            "effective_radius_kpc": [1.5, 2.5, 3.0, -1.0],
+            "completeness_pct": [100.0, 50.0, 33.3, 16.7],
+        }
+    )
+
+
+def test_figures_are_built_from_positive_measurements():
+    assert stellar_mass_histogram(sample_catalogue()) is not None
+    assert effective_radius_histogram(sample_catalogue()) is not None
+    scatter = mass_radius_scatter(sample_catalogue())
+    assert scatter.axes[0].get_xscale() == "log"
+    assert scatter.axes[0].get_yscale() == "log"
+
+
+def test_figures_are_skipped_without_usable_data():
+    unusable = pd.DataFrame(
+        {"stellar_mass_solar": [np.nan], "effective_radius_kpc": [0.0], "completeness_pct": [0.0]}
+    )
+
+    assert stellar_mass_histogram(unusable) is None
+    assert effective_radius_histogram(unusable) is None
+    assert mass_radius_scatter(unusable) is None
+    assert stellar_mass_histogram(pd.DataFrame()) is None
+    assert mass_radius_scatter(pd.DataFrame({"stellar_mass_solar": [1.0]})) is None
+
+
+def test_generate_analytics_report_writes_the_available_figures(tmp_path):
+    messages = []
+
+    complete = generate_analytics_report(sample_catalogue(), tmp_path / "complete", messages.append)
+    partial = generate_analytics_report(
+        pd.DataFrame({"effective_radius_kpc": [1.0, 2.0]}), tmp_path / "partial", messages.append
+    )
+
+    assert [path.name for path in complete] == list(REPORT_FIGURES)
+    assert all(path.stat().st_size > 0 for path in complete)
+    assert [path.name for path in partial] == ["radius_dist.png"]
+    assert messages[-1] == f"Analytics report written to {tmp_path / 'partial'}"
+
+
+
+=== FILE: ./tests/test_app.py ===
+from pathlib import Path
+
+from streamlit.testing.v1 import AppTest
+
+APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
+COLOR_SELECTOR = "Select color mapping parameter:"
+
+
+def color_selector(app):
+    return next(selectbox for selectbox in app.selectbox if selectbox.label == COLOR_SELECTOR)
+
+
+def test_dashboard_renders_every_view_of_the_committed_catalogue():
+    app = AppTest.from_file(str(APP_PATH), default_timeout=120).run()
+
+    assert not app.exception
+    assert app.title[0].value == "Ultra-Diffuse Galaxies (UDG) Research Dashboard"
+    assert len(app.dataframe) == 1
+
+    for option in ("Cluster ID", "Distance (Mpc)", "Completeness (%)"):
+        color_selector(app).set_value(option).run()
+        assert not app.exception
+
+    app.sidebar.radio[0].set_value("Analytics").run()
+    assert not app.exception
+    assert app.subheader[-1].value == "Statistical Analytics"
+
+
+
+=== FILE: ./tests/test_astrometry.py ===
+import numpy as np
+import pandas as pd
+import pytest
+from sci_etl_core.processors import ClusteringStep, DeduplicationStep
+
+from udg_catalogue.astrometry import (
+    CartesianDistanceFeatures,
+    ConstellationStep,
+    SkyPositionMatcher,
+    cartesian_coordinates,
+    cross_match_catalogues,
+    located_rows,
+)
+
+
+def test_located_rows_requires_both_coordinates_within_range():
+    frame = pd.DataFrame(
+        {"ra": [10.0, 400.0, np.nan, 20.0, "bad"], "dec": [0.0, 0.0, 0.0, -95.0, 1.0]}
+    )
+
+    assert located_rows(frame).tolist() == [True, False, False, False, False]
+
+
+def test_located_rows_without_coordinate_columns():
+    assert not located_rows(pd.DataFrame({"ra": [1.0]})).any()
+
+
+def test_cartesian_coordinates_on_the_axes():
+    points = cartesian_coordinates([0.0, 90.0, 0.0], [0.0, 0.0, 90.0], [2.0, 3.0, 4.0])
+
+    np.testing.assert_allclose(points, [[2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]], atol=1e-12)
+
+
+def test_sky_position_matcher_pairs_close_neighbours_once():
+    frame = pd.DataFrame({"ra": [15.0, 15.0001, 35.0, np.nan], "dec": [30.0, 30.0001, -10.0, 0.0]})
+
+    assert SkyPositionMatcher().find_matches(frame, threshold=3.0) == [(0, 1)]
+
+
+def test_sky_position_matcher_ignores_pairs_beyond_threshold():
+    frame = pd.DataFrame({"ra": [10.0, 10.005], "dec": [20.0, 20.005]})
+
+    assert SkyPositionMatcher().find_matches(frame, threshold=1.0) == []
+
+
+def test_sky_position_matcher_needs_two_located_rows():
+    assert SkyPositionMatcher().find_matches(pd.DataFrame({"ra": [1.0], "dec": [1.0]}), 3.0) == []
+
+
+def test_sky_deduplication_fills_gaps_from_the_merged_row():
+    frame = pd.DataFrame(
+        {
+            "_norm_key": ["target1", "target1dup", "target2"],
+            "galaxy_name": ["Target_1", "Target_1_Dup", "Target_2_Isolated"],
+            "ra": [15.0, 15.0001, 35.0],
+            "dec": [30.0, 30.0001, -10.0],
+            "distance_mpc": [np.nan, 45.5, 12.0],
+            "stellar_mass_solar": [1e9, np.nan, 5e8],
+            "dark_matter_fraction": [0.9, 0.95, 0.3],
+        }
+    )
+
+    merged = DeduplicationStep("_norm_key", matcher=SkyPositionMatcher(), match_threshold=3.0).process(frame)
+
+    assert merged["galaxy_name"].tolist() == ["Target_1", "Target_2_Isolated"]
+    target = merged.iloc[0]
+    assert target["distance_mpc"] == 45.5
+    assert target["stellar_mass_solar"] == 1e9
+    assert target["dark_matter_fraction"] == 0.9
+
+
+def test_cartesian_distance_features_use_fully_located_rows_only():
+    frame = pd.DataFrame(
+        {"ra": [10.0, 10.1, np.nan], "dec": [20.0, 20.1, 10.0], "distance_mpc": [15.0, np.nan, 10.0]},
+        index=[5, 6, 7],
+    )
+
+    features, index = CartesianDistanceFeatures().extract(frame)
+
+    assert index.tolist() == [5]
+    assert features.shape == (1, 3)
+
+
+def test_cartesian_distance_features_without_distance_column():
+    features, index = CartesianDistanceFeatures().extract(pd.DataFrame({"ra": [1.0], "dec": [1.0]}))
+
+    assert features.shape == (0, 3)
+    assert len(index) == 0
+
+
+def test_clustering_groups_nearby_galaxies_in_three_dimensions():
+    frame = pd.DataFrame(
+        {
+            "ra": [10.0, 10.1, 100.0, np.nan],
+            "dec": [20.0, 20.1, -50.0, 10.0],
+            "distance_mpc": [15.0, 15.1, 80.0, 10.0],
+        }
+    )
+
+    clusters = ClusteringStep(CartesianDistanceFeatures(), eps=2.0, min_samples=2).process(frame)["cluster_id"].tolist()
+
+    assert clusters[0] == clusters[1] != -1
+    assert clusters[2] == -1
+    assert clusters[3] == -1
+
+
+def test_constellation_step_names_located_galaxies_only():
+    frame = pd.DataFrame({"ra": [83.633, np.nan, 83.633], "dec": [-5.361, 0.0, 120.0]})
+
+    assert ConstellationStep().process(frame)["constellation"].tolist() == ["Orion", "Unknown", "Unknown"]
+
+
+def test_constellation_step_without_coordinates():
+    frame = pd.DataFrame({"galaxy_name": ["G1"]})
+
+    assert ConstellationStep().process(frame)["constellation"].tolist() == ["Unknown"]
+
+
+def test_cross_match_returns_matched_rows_with_separation():
+    ours = pd.DataFrame({"galaxy_name": ["A", "B", "C"], "ra": [10.0, 50.0, np.nan], "dec": [20.0, -30.0, 0.0]})
+    reference = pd.DataFrame({"ra": [10.0002, 200.0], "dec": [20.0, 10.0]})
+
+    matched = cross_match_catalogues(ours, reference, max_separation_arcsec=3.0)
+
+    assert matched["galaxy_name"].tolist() == ["A"]
+    assert matched["matched_with_ref"].all()
+    expected_arcsec = 0.0002 * 3600 * np.cos(np.deg2rad(20.0))
+    assert matched["separation_arcsec"].iloc[0] == pytest.approx(expected_arcsec, rel=1e-3)
+
+
+def test_cross_match_with_empty_reference_returns_empty_frame():
+    ours = pd.DataFrame({"galaxy_name": ["A"], "ra": [10.0], "dec": [20.0]})
+
+    matched = cross_match_catalogues(ours, pd.DataFrame({"ra": [], "dec": []}))
+
+    assert matched.empty
+    assert {"separation_arcsec", "matched_with_ref"}.issubset(matched.columns)
+
+
+
+=== FILE: ./tests/test_config.py ===
+import pytest
+from sci_etl_core import ConfigurationError
+
+from udg_catalogue.config import (
+    API_KEY_ENV_VAR,
+    DEFAULT_CONFIG_PATH,
+    PROJECT_ROOT,
+    CatalogueConfig,
+    load_catalogue_config,
+)
+
+
+def test_repository_config_loads_with_project_relative_paths(monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "sk-from-environment")
+
+    config = load_catalogue_config()
+
+    assert config.llm.api_key.get_secret_value() == "sk-from-environment"
+    assert config.llm.base_url == "https://api.deepseek.com"
+    assert config.pipeline.search_query == "cat:astro-ph.GA AND abs:ultra-diffuse"
+    assert config.pipeline.max_records == 500
+    assert config.paths.raw_catalogue == PROJECT_ROOT / "udg_database.csv"
+    assert config.paths.processed_ids == PROJECT_ROOT / "processed_arxiv_ids.txt"
+    assert DEFAULT_CONFIG_PATH == PROJECT_ROOT / "config.yaml"
+
+
+def test_env_file_beside_config_supplies_api_key_and_paths_follow_config(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "pipeline:\n  max_records: 42\npaths:\n  raw_catalogue: data/raw.csv\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(f"{API_KEY_ENV_VAR}=sk-from-dotenv\n", encoding="utf-8")
+
+    config = load_catalogue_config(config_path)
+
+    assert config.llm.api_key.get_secret_value() == "sk-from-dotenv"
+    assert config.pipeline.max_records == 42
+    assert config.paths.raw_catalogue == tmp_path / "data" / "raw.csv"
+    assert config.paths.sorted_catalogue == tmp_path / "udg_database_sorted.csv"
+
+
+def test_missing_config_file_raises_configuration_error(tmp_path):
+    with pytest.raises(ConfigurationError):
+        load_catalogue_config(tmp_path / "missing.yaml")
+
+
+def test_defaults_match_previous_pipeline_settings():
+    config = CatalogueConfig()
+
+    assert config.pipeline.page_size == 100
+    assert config.pipeline.search_delay == 3.0
+    assert config.clustering.max_distance_mpc == 5.0
+    assert config.clustering.min_samples == 2
+    assert config.deduplication.max_separation_arcsec == 3.0
+
+
+
+=== FILE: ./tests/test_main.py ===
+import logging
+
+import pytest
+from sci_etl_core import PipelineAborted
+
+import main as entrypoint
+from udg_catalogue.config import API_KEY_ENV_VAR
+
+RAW_CATALOGUE = (
+    "galaxy_name,ra,dec,distance_mpc,effective_radius_kpc,stellar_mass_solar,dark_matter_fraction\n"
+    "Alpha,83.633,-5.361,5.0,2.0,1e8,0.9\n"
+    "Beta,10.0,20.0,15.0,1.5,3e8,\n"
+)
+REPORT_NAMES = ["mass_vs_radius.png", "radius_dist.png", "stellar_mass_dist.png"]
+
+
+async def ingestion_must_not_run(*_arguments):
+    raise AssertionError("ingestion must not run")
+
+
+@pytest.fixture
+def project(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_text("pipeline:\n  max_records: 3\n", encoding="utf-8")
+    (tmp_path / "udg_database.csv").write_text(RAW_CATALOGUE, encoding="utf-8")
+    monkeypatch.setattr(entrypoint, "configure_logging", lambda name, _log_file: logging.getLogger(f"test.{name}"))
+    return tmp_path
+
+
+def run_main(project, *arguments):
+    return entrypoint.main(["--config", str(project / "config.yaml"), *arguments])
+
+
+def test_skip_ingestion_rebuilds_every_output_offline(project, monkeypatch):
+    monkeypatch.setattr(entrypoint, "run_ingestion", ingestion_must_not_run)
+
+    assert run_main(project, "--skip-ingestion") == entrypoint.EXIT_OK
+
+    assert (project / "udg_database_sorted.csv").is_file()
+    assert (project / "udg_3d_map.html").is_file()
+    assert sorted(path.name for path in (project / "analysis").iterdir()) == REPORT_NAMES
+
+
+def test_missing_raw_catalogue_skips_reports(project, monkeypatch):
+    monkeypatch.setattr(entrypoint, "run_ingestion", ingestion_must_not_run)
+    (project / "udg_database.csv").unlink()
+
+    assert run_main(project, "--skip-ingestion") == entrypoint.EXIT_OK
+
+    assert not (project / "udg_database_sorted.csv").exists()
+    assert not (project / "udg_3d_map.html").exists()
+
+
+def test_missing_api_key_stops_before_ingestion(project, monkeypatch):
+    monkeypatch.setattr(entrypoint, "run_ingestion", ingestion_must_not_run)
+
+    assert run_main(project) == entrypoint.EXIT_MISSING_API_KEY
+
+    assert not (project / "udg_database_sorted.csv").exists()
+
+
+def test_ingestion_rescans_newest_submissions_unless_resuming(project, monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "sk-test")
+    calls = []
+
+    async def record_ingestion(config, _logger, start_index):
+        calls.append((config.pipeline.max_records, start_index))
+        return 2
+
+    monkeypatch.setattr(entrypoint, "run_ingestion", record_ingestion)
+
+    assert run_main(project) == entrypoint.EXIT_OK
+    assert run_main(project, "--resume") == entrypoint.EXIT_OK
+
+    assert calls == [(3, 0), (3, None)]
+    assert (project / "udg_database_sorted.csv").is_file()
+
+
+def test_aborted_ingestion_still_rebuilds_outputs(project, monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "sk-test")
+
+    async def abort_ingestion(*_arguments):
+        raise PipelineAborted("Listing fetch failed", 4)
+
+    monkeypatch.setattr(entrypoint, "run_ingestion", abort_ingestion)
+
+    assert run_main(project) == entrypoint.EXIT_INGESTION_ABORTED
+
+    assert (project / "udg_database_sorted.csv").is_file()
+
+
+
+=== FILE: ./tests/test_maps.py ===
+import numpy as np
+import pandas as pd
+import pytest
+
+from udg_catalogue.maps import (
+    DARK_MATTER_COLOR_COLUMN,
+    HOVER_COLUMNS,
+    build_3d_figure,
+    cluster_label,
+    prepare_map_frame,
+    write_3d_map,
+)
+
+
+def sample_catalogue():
+    return pd.DataFrame(
+        {
+            "galaxy_name": ["A", "B", "C"],
+            "ra": [0.0, 90.0, 10.0],
+            "dec": [0.0, 0.0, np.nan],
+            "distance_mpc": [4.0, 9.0, 1.0],
+            "effective_radius_kpc": [4.0, np.nan, 1.0],
+            "stellar_mass_solar": [2.5e8, np.nan, 1.0],
+            "dark_matter_fraction": [1.2, np.nan, 0.5],
+            "completeness_pct": [100.0, 50.0, 0.0],
+            "constellation": ["Pisces", np.nan, "Lyra"],
+            "cluster_id": [3, -1, 0],
+        }
+    )
+
+
+def test_prepare_map_frame_positions_sizes_and_hover_text():
+    frame = prepare_map_frame(sample_catalogue())
+
+    assert frame["galaxy_name"].tolist() == ["A", "B"]
+    np.testing.assert_allclose(frame[["x", "y", "z"]].to_numpy(), [[2.0, 0.0, 0.0], [0.0, 3.0, 0.0]], atol=1e-12)
+    first, second = frame.iloc[0], frame.iloc[1]
+    assert first["size_visual"] == 10.0
+    assert second["size_visual"] == 5.0
+    assert first["dark_matter_fraction"] == 1.0
+    assert first[DARK_MATTER_COLOR_COLUMN] == 1.0
+    assert second[DARK_MATTER_COLOR_COLUMN] == 0.0
+    assert [first[column] for column in HOVER_COLUMNS] == [
+        "Pisces",
+        "Cluster #3",
+        "100.0%",
+        "0.0000°",
+        "0.0000°",
+        "4.00 Mpc",
+        "4.00 kpc",
+        "2.50e+08 M☉",
+        "100.0%",
+    ]
+    assert [second[column] for column in HOVER_COLUMNS] == [
+        "Unknown",
+        "Single / Unclustered",
+        "50.0%",
+        "90.0000°",
+        "0.0000°",
+        "9.00 Mpc",
+        "N/A",
+        "N/A",
+        "N/A",
+    ]
+
+
+def test_prepare_map_frame_without_spatial_columns_is_empty():
+    assert prepare_map_frame(pd.DataFrame({"galaxy_name": ["A"], "ra": [1.0]})).empty
+
+
+def test_prepare_map_frame_drops_negative_distances():
+    frame = pd.DataFrame({"galaxy_name": ["A"], "ra": [1.0], "dec": [1.0], "distance_mpc": [-3.0]})
+
+    assert prepare_map_frame(frame).empty
+
+
+def test_build_3d_figure_carries_hover_template_and_point_count():
+    figure = build_3d_figure(prepare_map_frame(sample_catalogue()))
+
+    assert figure.layout.title.text == "3D Distribution of Ultra-Diffuse Galaxies (N = 2)"
+    assert figure.data[0].hovertemplate.startswith("<b>%{hovertext}</b>")
+    assert len(figure.data[0].x) == 2
+
+
+def test_write_3d_map_writes_html_only_when_galaxies_are_located(tmp_path):
+    destination = tmp_path / "map.html"
+    skipped = tmp_path / "skipped.html"
+    messages = []
+
+    assert write_3d_map(sample_catalogue(), destination, messages.append)
+    assert not write_3d_map(pd.DataFrame({"galaxy_name": []}), skipped, messages.append)
+
+    assert "plotly" in destination.read_text(encoding="utf-8").lower()
+    assert not skipped.exists()
+    assert messages == [
+        f"3D map written to {destination}",
+        "3D map skipped: no galaxies have RA, Dec and distance",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cluster_id", "expected"),
+    [(-1, "Single / Unclustered"), (np.nan, "Single / Unclustered"), (2.0, "Cluster #2")],
+)
+def test_cluster_label(cluster_id, expected):
+    assert cluster_label(cluster_id) == expected
+
+
+
+=== FILE: ./tests/test_naming.py ===
+import math
+
+import pytest
+
+from udg_catalogue.naming import GalaxyNameNormalizer
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("DF 44", "df44"),
+        ("Dragonfly 44", "df44"),
+        ("df-44", "df44"),
+        ("DF044", "df44"),
+        ("ＤＦ４４", "df44"),
+        ("VCC 1234", "vcc1234"),
+        ("Coma UDG", "comaudg"),
+        ("KDG 44", "kdg44"),
+        ("UGC 2162", "ugc2162"),
+        ("NGC 1052-DF2", "ngc1052df2"),
+        ("NGC 1052-DF4", "ngc1052df4"),
+        ("Dw0010-0112", "dw10.112"),
+        ("dw 10-112", "dw10.112"),
+        ("dw 101-12", "dw101.12"),
+        ("+", ""),
+        (None, ""),
+        (math.nan, ""),
+        ("", ""),
+        (["DF 44"], ""),
+    ],
+)
+def test_normalize(name, expected):
+    assert GalaxyNameNormalizer().normalize(name) == expected
+
+
+def test_distinct_catalogue_numbers_never_share_a_key():
+    normalizer = GalaxyNameNormalizer()
+    names = ["DF 44", "KDG 44", "UGC 44", "NGC 1052-DF2", "NGC 1052-DF4", "dw 1-12", "dw 11-2"]
+
+    assert len({normalizer.normalize(name) for name in names}) == len(names)
+
+
+def test_prefix_aliases_are_configurable():
+    assert GalaxyNameNormalizer(prefix_aliases={}).normalize("Dragonfly 44") == "dragonfly44"
+    assert GalaxyNameNormalizer(prefix_aliases={"virgocc": "vcc"}).normalize("VirgoCC 1287") == "vcc1287"
+
+
+
+=== FILE: ./tests/test_pipeline.py ===
+import asyncio
+import gzip
+import json
+import logging
+
+import httpx
+import pandas as pd
+from sci_etl_core import AsyncLLMClient
+
+from udg_catalogue import pipeline as pipeline_module
+from udg_catalogue.pipeline import EXTRACTION_RESULT_KEY, run_ingestion
+from udg_catalogue.prompts import EXTRACTION_PROMPT, RELEVANCE_PROMPT
+
+LISTING = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2601.00001v1</id>
+    <title>Dragonfly 44 revisited</title>
+    <summary>Deep imaging of an ultra-diffuse galaxy.</summary>
+    <link href="http://arxiv.org/abs/2601.00001v1" rel="alternate" type="text/html"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2601.00002v1</id>
+    <title>Ultra-diffuse galaxies in TNG50</title>
+    <summary>Purely simulated galaxies.</summary>
+  </entry>
+</feed>"""
+EMPTY_LISTING = b'<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+LATEX_SOURCE = rb"\documentclass{article}\begin{document}Dragonfly 44 has an effective radius of 4.6 kpc.\end{document}"
+EXTRACTED_GALAXIES = [
+    {
+        "galaxy_name": "Dragonfly 44",
+        "ra": 195.24,
+        "dec": 26.98,
+        "distance_mpc": 100.0,
+        "effective_radius_kpc": 4.6,
+        "stellar_mass_solar": 3e8,
+        "dark_matter_fraction": 99.0,
+    },
+    {"galaxy_name": "mock_udg_1", "ra": 10.0, "dec": 10.0},
+]
+
+
+class ScriptedLLMClient(AsyncLLMClient):
+    def __init__(self):
+        self.calls = []
+        self.closed = False
+
+    async def complete_json(self, system_prompt, user_content, timeout=None):
+        self.calls.append((system_prompt, user_content))
+        if system_prompt == RELEVANCE_PROMPT:
+            return {"relevant": "TNG50" not in user_content}
+        return {EXTRACTION_RESULT_KEY: EXTRACTED_GALAXIES}
+
+    async def aclose(self):
+        self.closed = True
+
+
+class FakeArxiv:
+    def __init__(self):
+        self.listing_requests = []
+
+    def handle(self, request):
+        if request.url.path == "/api/query":
+            self.listing_requests.append(dict(request.url.params))
+            start = int(request.url.params["start"])
+            return httpx.Response(200, content=LISTING if start == 0 else EMPTY_LISTING)
+        if request.url.path.startswith("/e-print/"):
+            return httpx.Response(200, content=gzip.compress(LATEX_SOURCE))
+        return httpx.Response(404)
+
+
+def install_fake_clients(monkeypatch, arxiv, llm):
+    created = {}
+
+    def build_http_client(**kwargs):
+        created["http_options"] = kwargs
+        created["http_client"] = httpx.AsyncClient(transport=httpx.MockTransport(arxiv.handle))
+        return created["http_client"]
+
+    def build_llm_client(**kwargs):
+        created["llm_options"] = kwargs
+        return llm
+
+    monkeypatch.setattr(pipeline_module, "build_async_client", build_http_client)
+    monkeypatch.setattr(pipeline_module, "AsyncOpenAICompatibleClient", build_llm_client)
+    return created
+
+
+def test_ingestion_runs_arxiv_papers_through_the_assembled_pipeline(ingestion_config, monkeypatch):
+    arxiv = FakeArxiv()
+    llm = ScriptedLLMClient()
+    created = install_fake_clients(monkeypatch, arxiv, llm)
+
+    processed = asyncio.run(run_ingestion(ingestion_config, logging.getLogger("udg-test"), start_index=0))
+
+    assert processed == 1
+    assert pd.read_csv(ingestion_config.paths.raw_catalogue).to_dict("records") == [
+        {
+            "galaxy_name": "Dragonfly 44",
+            "ra": 195.24,
+            "dec": 26.98,
+            "distance_mpc": 100.0,
+            "effective_radius_kpc": 4.6,
+            "stellar_mass_solar": 3e8,
+            "dark_matter_fraction": 1.0,
+        }
+    ]
+    assert set(ingestion_config.paths.processed_ids.read_text(encoding="utf-8").split()) == {
+        "2601.00001v1",
+        "2601.00002v1",
+    }
+    metadata = json.loads(ingestion_config.paths.pipeline_metadata.read_text(encoding="utf-8"))
+    assert metadata["last_start_index"] == 2
+    assert [request["start"] for request in arxiv.listing_requests] == ["0", "2"]
+    assert arxiv.listing_requests[0]["search_query"] == ingestion_config.pipeline.search_query
+    assert arxiv.listing_requests[0]["max_results"] == "2"
+    assert [content for prompt, content in llm.calls if prompt == EXTRACTION_PROMPT] == [LATEX_SOURCE.decode()]
+    assert created["http_options"] == {
+        "timeout": ingestion_config.http.timeout,
+        "user_agent": ingestion_config.http.user_agent,
+    }
+    assert created["llm_options"]["base_url"] == ingestion_config.llm.base_url
+    assert created["llm_options"]["model"] == ingestion_config.llm.model
+    assert llm.closed
+    assert created["http_client"].is_closed
+
+
+def test_resumed_ingestion_starts_from_the_saved_offset(ingestion_config, monkeypatch):
+    arxiv = FakeArxiv()
+    install_fake_clients(monkeypatch, arxiv, ScriptedLLMClient())
+    ingestion_config.paths.pipeline_metadata.write_text(
+        json.dumps({"last_run_date": None, "last_start_index": 2}),
+        encoding="utf-8",
+    )
+
+    processed = asyncio.run(run_ingestion(ingestion_config, logging.getLogger("udg-test"), start_index=None))
+
+    assert processed == 0
+    assert [request["start"] for request in arxiv.listing_requests] == ["2"]
+
+
+
+=== FILE: ./tests/test_postprocess.py ===
+import numpy as np
+import pandas as pd
+
+from udg_catalogue.postprocess import (
+    CatalogueLayoutStep,
+    ValueClipStep,
+    build_catalogue_chain,
+    build_sorted_catalogue,
+    describe_catalogue,
+    read_catalogue,
+)
+
+
+def test_value_clip_step_bounds_present_columns_without_mutating_input():
+    frame = pd.DataFrame({"dark_matter_fraction": [1.5, -0.2, 0.4, np.nan]})
+
+    clipped = ValueClipStep({"dark_matter_fraction": (0.0, 1.0), "absent": (0.0, 1.0)}).process(frame)
+
+    assert clipped["dark_matter_fraction"].tolist()[:3] == [1.0, 0.0, 0.4]
+    assert np.isnan(clipped["dark_matter_fraction"].iloc[3])
+    assert frame["dark_matter_fraction"].iloc[0] == 1.5
+
+
+def test_layout_sorts_rows_orders_columns_and_hides_internal_columns():
+    frame = pd.DataFrame(
+        {
+            "_norm_key": ["b", "a", "c"],
+            "ra": [1.0, 2.0, 3.0],
+            "galaxy_name": ["B", "A", "C"],
+            "completeness_pct": [50.0, 100.0, 50.0],
+            "constellation": ["Orion", "Lyra", "Lyra"],
+            "cluster_id": [0, -1, 1],
+            "quality_flag": ["Needs Review", "Confirmed", "Needs Review"],
+        }
+    )
+
+    laid_out = CatalogueLayoutStep().process(frame)
+
+    assert laid_out["galaxy_name"].tolist() == ["A", "C", "B"]
+    assert laid_out.columns.tolist() == [
+        "galaxy_name",
+        "completeness_pct",
+        "quality_flag",
+        "constellation",
+        "cluster_id",
+        "ra",
+    ]
+
+
+def test_layout_without_sort_columns_keeps_row_order():
+    assert CatalogueLayoutStep().process(pd.DataFrame({"other": [2, 1]}))["other"].tolist() == [2, 1]
+
+
+def test_catalogue_chain_derives_the_scientific_columns(catalogue_config):
+    raw = pd.DataFrame(
+        {
+            "galaxy_name": ["Alpha", "Beta", "Beta copy", "Gamma"],
+            "ra": [83.633, 10.0, 10.0001, 10.1],
+            "dec": [-5.361, 20.0, 20.0001, 20.1],
+            "distance_mpc": [5.0, 15.0, np.nan, 15.1],
+            "effective_radius_kpc": [2.0, np.nan, np.nan, np.nan],
+            "stellar_mass_solar": [1e8, np.nan, 3e7, np.nan],
+            "dark_matter_fraction": [1.5, 0.5, np.nan, np.nan],
+        }
+    )
+
+    catalogue = build_catalogue_chain(catalogue_config).process(raw)
+    rows = catalogue.set_index("galaxy_name")
+
+    assert "_norm_key" not in catalogue.columns
+    assert rows.index.tolist() == ["Alpha", "Beta", "Gamma"]
+    assert rows.loc["Alpha", "dark_matter_fraction"] == 1.0
+    assert rows.loc["Alpha", "completeness_pct"] == 100.0
+    assert rows.loc["Alpha", "quality_flag"] == "Confirmed"
+    assert rows.loc["Alpha", "constellation"] == "Orion"
+    assert rows.loc["Alpha", "cluster_id"] == -1
+    assert rows.loc["Beta", "stellar_mass_solar"] == 3e7
+    assert rows.loc["Beta", "completeness_pct"] == 83.3
+    assert rows.loc["Beta", "cluster_id"] == rows.loc["Gamma", "cluster_id"] != -1
+    assert rows.loc["Gamma", "quality_flag"] == "Needs Review"
+
+
+def test_build_sorted_catalogue_writes_the_sorted_file(catalogue_config):
+    catalogue_config.paths.raw_catalogue.write_text(
+        "galaxy_name,ra,dec,distance_mpc\nBeta,10.0,20.0,\nNA,83.633,-5.361,5.0\n",
+        encoding="utf-8",
+    )
+    messages = []
+
+    catalogue = build_sorted_catalogue(catalogue_config, messages.append)
+
+    written = read_catalogue(catalogue_config.paths.sorted_catalogue)
+    assert written["galaxy_name"].tolist() == ["NA", "Beta"]
+    assert len(catalogue) == 2
+    assert messages[-1] == f"Sorted catalogue written to {catalogue_config.paths.sorted_catalogue}"
+    assert [path.name for path in catalogue_config.paths.sorted_catalogue.parent.glob("*.tmp")] == []
+
+
+def test_build_sorted_catalogue_skips_missing_or_empty_sources(catalogue_config):
+    messages = []
+    raw = catalogue_config.paths.raw_catalogue
+
+    assert build_sorted_catalogue(catalogue_config, messages.append) is None
+    raw.write_text("", encoding="utf-8")
+    assert build_sorted_catalogue(catalogue_config, messages.append) is None
+    raw.write_text("galaxy_name,ra\n", encoding="utf-8")
+    assert build_sorted_catalogue(catalogue_config, messages.append) is None
+
+    assert not catalogue_config.paths.sorted_catalogue.exists()
+    assert len(messages) == 3
+
+
+def test_describe_catalogue_counts():
+    catalogue = pd.DataFrame(
+        {
+            "completeness_pct": [100.0, 50.0, 100.0],
+            "constellation": ["Orion", "Unknown", "Lyra"],
+            "cluster_id": [0, -1, 0],
+        }
+    )
+
+    assert describe_catalogue(catalogue) == [
+        "Galaxies in sorted catalogue: 3",
+        "Galaxies with 100% completeness: 2",
+        "Constellations represented: 2",
+        "3D clusters: 1",
+    ]
+
+
+
+=== FILE: ./tests/test_prompts.py ===
+from udg_catalogue.config import KEY_COLUMN, MEASUREMENT_FIELDS
+from udg_catalogue.pipeline import EXTRACTION_RESULT_KEY
+from udg_catalogue.prompts import EXTRACTION_PROMPT, RELEVANCE_PROMPT
+
+
+def test_prompts_mention_json_as_json_mode_requires():
+    assert "JSON" in EXTRACTION_PROMPT
+    assert "JSON" in RELEVANCE_PROMPT
+
+
+def test_extraction_prompt_asks_for_every_exported_field_under_the_result_key():
+    assert f'"{EXTRACTION_RESULT_KEY}"' in EXTRACTION_PROMPT
+    for field in (KEY_COLUMN, *MEASUREMENT_FIELDS):
+        assert f'"{field}"' in EXTRACTION_PROMPT
+
+
+def test_relevance_prompt_asks_for_the_relevant_verdict():
+    assert '{"relevant": true}' in RELEVANCE_PROMPT
+    assert '{"relevant": false}' in RELEVANCE_PROMPT
+
+
+
+=== FILE: ./tests/test_validation.py ===
+import asyncio
+
+import pytest
+from sci_etl_core import AsyncEntityExtractor
+
+from udg_catalogue.validation import HasAnyMeasurement, ValidatedEntityExtractor, build_galaxy_validator
+
+
+class StaticEntityExtractor(AsyncEntityExtractor):
+    def __init__(self, entities):
+        self._entities = entities
+        self.texts = []
+
+    async def extract(self, text):
+        self.texts.append(text)
+        return self._entities
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        ({"galaxy_name": "Dragonfly 44", "ra": 10.0, "dec": -10.0}, True),
+        ({"galaxy_name": "Firefly 7", "distance_mpc": 20.0}, True),
+        ({"galaxy_name": "illustris_galaxy_1", "ra": 10.0}, False),
+        ({"galaxy_name": "mock_catalog_obj", "ra": 10.0}, False),
+        ({"galaxy_name": "TNG50-1", "distance_mpc": 20.0}, False),
+        ({"galaxy_name": "DF 1", "ra": 400.0, "dec": 0.0}, False),
+        ({"galaxy_name": "DF 2", "ra": 10.0, "dec": -100.0}, False),
+        ({"galaxy_name": "DF 3", "ra": "invalid", "dec": 0.0}, False),
+        ({"galaxy_name": "DF 4", "ra": 10.0, "dec": "invalid"}, False),
+        ({"galaxy_name": "NaN", "ra": 10.0}, False),
+        ({"galaxy_name": None, "ra": 10.0}, False),
+        ({"galaxy_name": "ValidName"}, False),
+        ({}, False),
+    ],
+)
+def test_galaxy_validator_applies_the_catalogue_rules(record, expected):
+    assert build_galaxy_validator().is_valid(record) is expected
+
+
+def test_has_any_measurement_ignores_missing_values():
+    validator = HasAnyMeasurement(["ra", "dec"])
+
+    assert validator.is_valid({"dec": 0.0})
+    assert not validator.is_valid({"ra": None, "distance_mpc": 1.0})
+
+
+def test_validated_extractor_drops_and_logs_rejected_entities():
+    messages = []
+    inner = StaticEntityExtractor(
+        [{"galaxy_name": "DF 44", "ra": 1.0}, {"galaxy_name": "mock_1", "ra": 1.0}]
+    )
+    extractor = ValidatedEntityExtractor(inner, build_galaxy_validator(), logger=messages.append)
+
+    assert asyncio.run(extractor.extract("paper text")) == [{"galaxy_name": "DF 44", "ra": 1.0}]
+    assert inner.texts == ["paper text"]
+    assert messages == ["Entity rejected by validation: 'mock_1'"]
+
+
+def test_validated_extractor_without_logger_drops_silently():
+    extractor = ValidatedEntityExtractor(
+        StaticEntityExtractor([{"galaxy_name": "mock_1", "ra": 1.0}]),
+        build_galaxy_validator(),
+    )
+
+    assert asyncio.run(extractor.extract("paper text")) == []
+
+
+
+=== FILE: ./udg_catalogue/analytics.py ===
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+
+import pandas as pd
+import seaborn as sns
+from matplotlib.figure import Figure
+
+MASS_COLUMN = "stellar_mass_solar"
+RADIUS_COLUMN = "effective_radius_kpc"
+COMPLETENESS_COLUMN = "completeness_pct"
+MASS_LABEL = r"Stellar Mass ($M_\odot$)"
+RADIUS_LABEL = r"$R_{eff}$ [kpc]"
+PLOT_STYLE = "darkgrid"
+
+
+def _positive_values(catalogue: pd.DataFrame, column: str) -> pd.Series:
+    if column not in catalogue.columns:
+        return pd.Series(dtype=float)
+    values = pd.to_numeric(catalogue[column], errors="coerce")
+    return values[values > 0]
+
+
+def _histogram(values: pd.Series, title: str, x_label: str, color: str) -> Figure | None:
+    if values.empty:
+        return None
+    with sns.axes_style(PLOT_STYLE):
+        figure = Figure(figsize=(8, 5))
+        axes = figure.subplots()
+    sns.histplot(values, log_scale=True, kde=False, color=color, ax=axes)
+    axes.set_title(title)
+    axes.set_xlabel(x_label)
+    axes.set_ylabel("Count")
+    figure.tight_layout()
+    return figure
+
+
+def stellar_mass_histogram(catalogue: pd.DataFrame) -> Figure | None:
+    return _histogram(
+        _positive_values(catalogue, MASS_COLUMN),
+        "Stellar Mass Distribution (Solar Masses)",
+        MASS_LABEL,
+        "purple",
+    )
+
+
+def effective_radius_histogram(catalogue: pd.DataFrame) -> Figure | None:
+    return _histogram(
+        _positive_values(catalogue, RADIUS_COLUMN),
+        "Effective Radius Distribution",
+        RADIUS_LABEL,
+        "teal",
+    )
+
+
+def mass_radius_scatter(catalogue: pd.DataFrame) -> Figure | None:
+    if not {MASS_COLUMN, RADIUS_COLUMN, COMPLETENESS_COLUMN}.issubset(catalogue.columns):
+        return None
+    data = catalogue.assign(
+        **{
+            MASS_COLUMN: pd.to_numeric(catalogue[MASS_COLUMN], errors="coerce"),
+            RADIUS_COLUMN: pd.to_numeric(catalogue[RADIUS_COLUMN], errors="coerce"),
+        }
+    )
+    data = data[(data[MASS_COLUMN] > 0) & (data[RADIUS_COLUMN] > 0)]
+    if data.empty:
+        return None
+    with sns.axes_style(PLOT_STYLE):
+        figure = Figure(figsize=(10, 5))
+        axes = figure.subplots()
+    sns.scatterplot(
+        data=data,
+        x=RADIUS_COLUMN,
+        y=MASS_COLUMN,
+        hue=COMPLETENESS_COLUMN,
+        palette="viridis",
+        alpha=0.7,
+        ax=axes,
+    )
+    axes.set_xscale("log")
+    axes.set_yscale("log")
+    axes.set_title("Stellar Mass vs Effective Radius")
+    axes.set_xlabel(RADIUS_LABEL)
+    axes.set_ylabel(MASS_LABEL)
+    axes.legend(title="Completeness %", loc="upper left", bbox_to_anchor=(1, 1))
+    figure.tight_layout()
+    return figure
+
+
+REPORT_FIGURES: dict[str, Callable[[pd.DataFrame], Figure | None]] = {
+    "stellar_mass_dist.png": stellar_mass_histogram,
+    "radius_dist.png": effective_radius_histogram,
+    "mass_vs_radius.png": mass_radius_scatter,
+}
+
+
+def generate_analytics_report(
+    catalogue: pd.DataFrame,
+    output_dir: Path,
+    log: Callable[[str], None],
+) -> list[Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for file_name, build_figure in REPORT_FIGURES.items():
+        figure = build_figure(catalogue)
+        if figure is None:
+            log(f"Analytics figure skipped for lack of data: {file_name}")
+            continue
+        destination = output_dir / file_name
+        figure.savefig(destination, dpi=300)
+        written.append(destination)
+    log(f"Analytics report written to {output_dir}")
+    return written
+
+
+
+=== FILE: ./udg_catalogue/astrometry.py ===
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+import astropy.units as u
+import numpy as np
+import pandas as pd
+from astropy.coordinates import SkyCoord
+from sci_etl_core.processors import FeatureExtractor, NeighborMatcher, Processor
+
+UNKNOWN_CONSTELLATION = "Unknown"
+
+
+def located_rows(frame: pd.DataFrame, ra_column: str = "ra", dec_column: str = "dec") -> pd.Series:
+    if ra_column not in frame.columns or dec_column not in frame.columns:
+        return pd.Series(False, index=frame.index)
+    ra = pd.to_numeric(frame[ra_column], errors="coerce")
+    dec = pd.to_numeric(frame[dec_column], errors="coerce")
+    return ra.between(0.0, 360.0) & dec.between(-90.0, 90.0)
+
+
+def sky_coordinates(frame: pd.DataFrame, ra_column: str = "ra", dec_column: str = "dec") -> SkyCoord:
+    return SkyCoord(
+        ra=frame[ra_column].to_numpy(dtype=float) * u.deg,
+        dec=frame[dec_column].to_numpy(dtype=float) * u.deg,
+        frame="icrs",
+    )
+
+
+def cartesian_coordinates(
+    ra_degrees: Sequence[float] | pd.Series,
+    dec_degrees: Sequence[float] | pd.Series,
+    radius: Sequence[float] | pd.Series,
+) -> np.ndarray:
+    ra = np.deg2rad(np.asarray(ra_degrees, dtype=float))
+    dec = np.deg2rad(np.asarray(dec_degrees, dtype=float))
+    distance = np.asarray(radius, dtype=float)
+    return np.column_stack(
+        (
+            distance * np.cos(dec) * np.cos(ra),
+            distance * np.cos(dec) * np.sin(ra),
+            distance * np.sin(dec),
+        )
+    )
+
+
+class SkyPositionMatcher(NeighborMatcher):
+    def __init__(self, ra_column: str = "ra", dec_column: str = "dec") -> None:
+        self._ra_column = ra_column
+        self._dec_column = dec_column
+
+    def find_matches(self, frame: pd.DataFrame, threshold: float) -> list[tuple[int, int]]:
+        located = frame[located_rows(frame, self._ra_column, self._dec_column)]
+        if len(located) < 2:
+            return []
+        coordinates = sky_coordinates(located, self._ra_column, self._dec_column)
+        neighbours, separations, _ = coordinates.match_to_catalog_sky(coordinates, nthneighbor=2)
+        separation_arcsec = separations.to_value(u.arcsec)
+        labels = located.index.to_numpy()
+        return [
+            (int(labels[position]), int(labels[neighbour]))
+            for position, neighbour in enumerate(neighbours)
+            if separation_arcsec[position] <= threshold and labels[position] < labels[neighbour]
+        ]
+
+
+class CartesianDistanceFeatures(FeatureExtractor):
+    def __init__(
+        self,
+        distance_column: str = "distance_mpc",
+        ra_column: str = "ra",
+        dec_column: str = "dec",
+    ) -> None:
+        self._distance_column = distance_column
+        self._ra_column = ra_column
+        self._dec_column = dec_column
+
+    def extract(self, frame: pd.DataFrame) -> tuple[np.ndarray, pd.Index]:
+        if self._distance_column not in frame.columns:
+            return np.empty((0, 3)), frame.index[:0]
+        distance = pd.to_numeric(frame[self._distance_column], errors="coerce")
+        usable = located_rows(frame, self._ra_column, self._dec_column) & distance.notna()
+        features = cartesian_coordinates(
+            frame.loc[usable, self._ra_column],
+            frame.loc[usable, self._dec_column],
+            distance[usable],
+        )
+        return features, frame.index[usable.to_numpy()]
+
+
+class ConstellationStep(Processor):
+    def __init__(
+        self,
+        output_column: str = "constellation",
+        ra_column: str = "ra",
+        dec_column: str = "dec",
+    ) -> None:
+        self._output_column = output_column
+        self._ra_column = ra_column
+        self._dec_column = dec_column
+
+    def process(self, frame: pd.DataFrame) -> pd.DataFrame:
+        frame = frame.copy()
+        frame[self._output_column] = UNKNOWN_CONSTELLATION
+        located = located_rows(frame, self._ra_column, self._dec_column)
+        if located.any():
+            coordinates = sky_coordinates(frame.loc[located], self._ra_column, self._dec_column)
+            frame.loc[located, self._output_column] = coordinates.get_constellation(short_name=False)
+        return frame
+
+
+def cross_match_catalogues(
+    catalogue: pd.DataFrame,
+    reference: pd.DataFrame,
+    max_separation_arcsec: float = 3.0,
+) -> pd.DataFrame:
+    ours = catalogue[located_rows(catalogue)].copy()
+    theirs = reference[located_rows(reference)]
+    if ours.empty or theirs.empty:
+        return ours.assign(separation_arcsec=np.nan, matched_with_ref=False).iloc[0:0]
+    _, separations, _ = sky_coordinates(ours).match_to_catalog_sky(sky_coordinates(theirs))
+    ours["separation_arcsec"] = separations.to_value(u.arcsec)
+    ours["matched_with_ref"] = ours["separation_arcsec"] <= max_separation_arcsec
+    return ours[ours["matched_with_ref"]]
+
+
+
+=== FILE: ./udg_catalogue/config.py ===
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+from sci_etl_core.config import BaseAppConfig, PipelineConfig, load_config
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+API_KEY_ENV_VAR = "DEEPSEEK_API_KEY"
+
+KEY_COLUMN = "galaxy_name"
+MEASUREMENT_FIELDS: tuple[str, ...] = (
+    "ra",
+    "dec",
+    "distance_mpc",
+    "effective_radius_kpc",
+    "stellar_mass_solar",
+    "dark_matter_fraction",
+)
+FRACTION_BOUNDS: dict[str, tuple[float, float]] = {"dark_matter_fraction": (0.0, 1.0)}
+
+
+class CataloguePipelineConfig(PipelineConfig):
+    page_size: int = 100
+    search_delay: float = 3.0
+
+
+class PathsConfig(BaseModel):
+    raw_catalogue: Path = Path("udg_database.csv")
+    sorted_catalogue: Path = Path("udg_database_sorted.csv")
+    processed_ids: Path = Path("processed_arxiv_ids.txt")
+    pipeline_metadata: Path = Path("pipeline_meta.json")
+    html_map: Path = Path("udg_3d_map.html")
+    analytics_dir: Path = Path("analysis")
+    log_file: Path = Path("pipeline.log")
+
+    def anchored_at(self, root: Path) -> PathsConfig:
+        return self.model_copy(update={name: root / value for name, value in self})
+
+
+class ClusteringConfig(BaseModel):
+    max_distance_mpc: float = 5.0
+    min_samples: int = 2
+
+
+class DeduplicationConfig(BaseModel):
+    max_separation_arcsec: float = 3.0
+
+
+class CatalogueConfig(BaseAppConfig):
+    pipeline: CataloguePipelineConfig = Field(default_factory=CataloguePipelineConfig)
+    paths: PathsConfig = Field(default_factory=PathsConfig)
+    clustering: ClusteringConfig = Field(default_factory=ClusteringConfig)
+    deduplication: DeduplicationConfig = Field(default_factory=DeduplicationConfig)
+
+
+def load_catalogue_config(config_path: Path = DEFAULT_CONFIG_PATH) -> CatalogueConfig:
+    resolved = Path(config_path).resolve()
+    config = load_config(
+        CatalogueConfig,
+        resolved,
+        resolved.parent / ".env",
+        api_key_env_var=API_KEY_ENV_VAR,
+    )
+    return config.model_copy(update={"paths": config.paths.anchored_at(resolved.parent)})
+
+
+
+=== FILE: ./udg_catalogue/maps.py ===
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+from udg_catalogue.astrometry import UNKNOWN_CONSTELLATION, cartesian_coordinates
+from udg_catalogue.config import KEY_COLUMN
+
+SPATIAL_COLUMNS: tuple[str, ...] = ("ra", "dec", "distance_mpc")
+DARK_MATTER_COLOR_COLUMN = "dark_matter_color"
+MISSING_VALUE = "N/A"
+HOVER_COLUMNS: tuple[str, ...] = (
+    "hover_constellation",
+    "hover_cluster",
+    "hover_completeness",
+    "hover_ra",
+    "hover_dec",
+    "hover_distance",
+    "hover_radius",
+    "hover_mass",
+    "hover_dark_matter",
+)
+HOVER_TEMPLATE = (
+    "<b>%{hovertext}</b><br><br>"
+    "<b>Constellation:</b> %{customdata[0]}<br>"
+    "<b>Cluster Status:</b> %{customdata[1]}<br>"
+    "<b>Data Completeness:</b> %{customdata[2]}<br>"
+    "--------------------------------<br>"
+    "<b>Coordinates:</b> RA %{customdata[3]} | Dec %{customdata[4]}<br>"
+    "<b>Distance:</b> %{customdata[5]}<br>"
+    "<b>Effective Radius (R_eff):</b> %{customdata[6]}<br>"
+    "<b>Stellar Mass:</b> %{customdata[7]}<br>"
+    "<b>Dark Matter Fraction:</b> %{customdata[8]}<extra></extra>"
+)
+GRID_COLOR = "#1e293b"
+
+
+def _column(frame: pd.DataFrame, name: str, default: Any) -> pd.Series:
+    return frame[name] if name in frame.columns else pd.Series(default, index=frame.index)
+
+
+def _numeric(frame: pd.DataFrame, name: str) -> pd.Series:
+    return pd.to_numeric(_column(frame, name, np.nan), errors="coerce")
+
+
+def _formatted(values: pd.Series, template: str, scale: float = 1.0) -> pd.Series:
+    return values.map(lambda value: MISSING_VALUE if pd.isna(value) else template.format(value * scale))
+
+
+def cluster_label(cluster_id: Any) -> str:
+    if pd.isna(cluster_id) or cluster_id == -1:
+        return "Single / Unclustered"
+    return f"Cluster #{int(cluster_id)}"
+
+
+def prepare_map_frame(catalogue: pd.DataFrame) -> pd.DataFrame:
+    if not set(SPATIAL_COLUMNS).issubset(catalogue.columns):
+        return catalogue.iloc[0:0].copy()
+    frame = catalogue.copy()
+    for column in SPATIAL_COLUMNS:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame = frame.dropna(subset=list(SPATIAL_COLUMNS))
+    frame = frame[frame["distance_mpc"] >= 0]
+    if frame.empty:
+        return frame
+
+    dark_matter = _numeric(frame, "dark_matter_fraction").clip(0.0, 1.0)
+    frame["dark_matter_fraction"] = dark_matter
+    frame[DARK_MATTER_COLOR_COLUMN] = dark_matter.fillna(0.0)
+
+    positions = cartesian_coordinates(frame["ra"], frame["dec"], np.sqrt(frame["distance_mpc"]))
+    frame["x"], frame["y"], frame["z"] = positions[:, 0], positions[:, 1], positions[:, 2]
+    frame["size_visual"] = np.sqrt(_numeric(frame, "effective_radius_kpc").fillna(1.0).clip(lower=0.0)) * 5
+
+    frame["hover_constellation"] = _column(frame, "constellation", UNKNOWN_CONSTELLATION).fillna(UNKNOWN_CONSTELLATION)
+    frame["hover_cluster"] = _column(frame, "cluster_id", -1).map(cluster_label)
+    frame["hover_completeness"] = _formatted(_numeric(frame, "completeness_pct"), "{:.1f}%")
+    frame["hover_ra"] = _formatted(frame["ra"], "{:.4f}°")
+    frame["hover_dec"] = _formatted(frame["dec"], "{:.4f}°")
+    frame["hover_distance"] = _formatted(frame["distance_mpc"], "{:.2f} Mpc")
+    frame["hover_radius"] = _formatted(_numeric(frame, "effective_radius_kpc"), "{:.2f} kpc")
+    frame["hover_mass"] = _formatted(_numeric(frame, "stellar_mass_solar"), "{:.2e} M☉")
+    frame["hover_dark_matter"] = _formatted(dark_matter, "{:.1f}%", scale=100.0)
+    return frame
+
+
+def build_3d_figure(
+    map_frame: pd.DataFrame,
+    color_column: str = DARK_MATTER_COLOR_COLUMN,
+    color_label: str = "DM Fraction",
+    color_range: Sequence[float] | None = (0.0, 1.0),
+    title: str | None = None,
+) -> go.Figure:
+    figure = px.scatter_3d(
+        map_frame,
+        x="x",
+        y="y",
+        z="z",
+        color=color_column,
+        size="size_visual",
+        hover_name=KEY_COLUMN,
+        custom_data=list(HOVER_COLUMNS),
+        color_continuous_scale="Viridis",
+        range_color=list(color_range) if color_range is not None else None,
+        title=title or f"3D Distribution of Ultra-Diffuse Galaxies (N = {len(map_frame)})",
+        labels={color_column: color_label},
+    )
+    figure.update_traces(
+        marker={"sizemode": "diameter", "sizeref": 1, "sizemin": 3},
+        hovertemplate=HOVER_TEMPLATE,
+    )
+    figure.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0b0f19",
+        plot_bgcolor="#0b0f19",
+        scene={
+            "xaxis": {"gridcolor": GRID_COLOR, "title": "X Position [Mpc]"},
+            "yaxis": {"gridcolor": GRID_COLOR, "title": "Y Position [Mpc]"},
+            "zaxis": {"gridcolor": GRID_COLOR, "title": "Z Position [Mpc]"},
+            "bgcolor": "#0a0f1e",
+            "aspectmode": "cube",
+        },
+        margin={"l": 0, "r": 0, "b": 0, "t": 50},
+    )
+    return figure
+
+
+def write_3d_map(catalogue: pd.DataFrame, destination: Path, log: Callable[[str], None]) -> bool:
+    map_frame = prepare_map_frame(catalogue)
+    if map_frame.empty:
+        log("3D map skipped: no galaxies have RA, Dec and distance")
+        return False
+    build_3d_figure(map_frame).write_html(destination)
+    log(f"3D map written to {destination}")
+    return True
+
+
+
+=== FILE: ./udg_catalogue/naming.py ===
+from __future__ import annotations
+
+import re
+import unicodedata
+from collections.abc import Mapping
+from typing import Any
+
+from sci_etl_core.processors import DefaultKeyNormalizer, KeyNormalizer
+
+DEFAULT_PREFIX_ALIASES: dict[str, str] = {"dragonfly": "df"}
+_NAME_TOKEN = re.compile(r"[^\W\d_]+|\d+")
+_NUMBER_SEPARATOR = "."
+
+
+class GalaxyNameNormalizer(KeyNormalizer):
+    def __init__(self, prefix_aliases: Mapping[str, str] | None = None) -> None:
+        self._prefix_aliases = dict(DEFAULT_PREFIX_ALIASES if prefix_aliases is None else prefix_aliases)
+        self._missing_value_guard = DefaultKeyNormalizer()
+
+    def normalize(self, raw_value: Any) -> str:
+        if not self._missing_value_guard.normalize(raw_value):
+            return ""
+        tokens = _NAME_TOKEN.findall(unicodedata.normalize("NFKC", str(raw_value)).casefold())
+        if not tokens:
+            return ""
+        tokens[0] = self._prefix_aliases.get(tokens[0], tokens[0])
+        key: list[str] = []
+        previous_is_number = False
+        for token in tokens:
+            is_number = token.isdecimal()
+            if is_number and previous_is_number:
+                key.append(_NUMBER_SEPARATOR)
+            key.append(str(int(token)) if is_number else token)
+            previous_is_number = is_number
+        return "".join(key)
+
+
+
+=== FILE: ./udg_catalogue/pipeline.py ===
+from __future__ import annotations
+
+import logging
+
+import httpx
+from sci_etl_core import (
+    AsyncArxivExtractor,
+    AsyncCsvUpsertExporter,
+    AsyncETLPipeline,
+    AsyncFileStateManager,
+    AsyncLLMClient,
+    AsyncLLMEntityExtractor,
+    AsyncLLMRelevanceFilter,
+    AsyncOpenAICompatibleClient,
+)
+from sci_etl_core.http_async import build_async_client
+from sci_etl_core.parsers import LatexTarballParser, PdfPlumberParser
+
+from udg_catalogue.config import FRACTION_BOUNDS, KEY_COLUMN, MEASUREMENT_FIELDS, CatalogueConfig
+from udg_catalogue.naming import GalaxyNameNormalizer
+from udg_catalogue.prompts import EXTRACTION_PROMPT, RELEVANCE_PROMPT
+from udg_catalogue.validation import ValidatedEntityExtractor, build_galaxy_validator
+
+EXTRACTION_RESULT_KEY = "galaxies"
+
+
+def build_catalogue_exporter() -> AsyncCsvUpsertExporter:
+    return AsyncCsvUpsertExporter(
+        key_column=KEY_COLUMN,
+        value_columns=list(MEASUREMENT_FIELDS),
+        normalizer=GalaxyNameNormalizer(),
+        numeric_clip=dict(FRACTION_BOUNDS),
+    )
+
+
+def build_pipeline(
+    config: CatalogueConfig,
+    logger: logging.Logger,
+    http_client: httpx.AsyncClient,
+    llm_client: AsyncLLMClient,
+) -> AsyncETLPipeline:
+    extractor = AsyncArxivExtractor(
+        client=http_client,
+        pdf_parser=PdfPlumberParser(),
+        latex_parser=LatexTarballParser(),
+        max_retries=config.http.max_retries,
+        backoff_factor=config.http.backoff_factor,
+        sleep_before_search=config.pipeline.search_delay,
+        logger=logger.info,
+    )
+    entity_extractor = ValidatedEntityExtractor(
+        AsyncLLMEntityExtractor(
+            llm_client=llm_client,
+            system_prompt=EXTRACTION_PROMPT,
+            result_key=EXTRACTION_RESULT_KEY,
+            timeout=config.llm.timeout,
+        ),
+        build_galaxy_validator(),
+        logger=logger.info,
+    )
+    return AsyncETLPipeline(
+        extractor=extractor,
+        relevance_filter=AsyncLLMRelevanceFilter(llm_client=llm_client, system_prompt=RELEVANCE_PROMPT),
+        entity_extractor=entity_extractor,
+        exporter=build_catalogue_exporter(),
+        state_manager=AsyncFileStateManager(config.paths.processed_ids, config.paths.pipeline_metadata),
+        destination=str(config.paths.raw_catalogue),
+        max_concurrency=config.pipeline.max_workers,
+        logger=logger.warning,
+        closeables=[http_client, llm_client],
+    )
+
+
+async def run_ingestion(config: CatalogueConfig, logger: logging.Logger, start_index: int | None = 0) -> int:
+    http_client = build_async_client(timeout=config.http.timeout, user_agent=config.http.user_agent)
+    llm_client = AsyncOpenAICompatibleClient(
+        api_key=config.llm.api_key,
+        base_url=config.llm.base_url,
+        model=config.llm.model,
+        default_timeout=config.llm.timeout,
+    )
+    async with build_pipeline(config, logger, http_client, llm_client) as pipeline:
+        return await pipeline.run(
+            query=config.pipeline.search_query,
+            page_size=config.pipeline.page_size,
+            total_limit=config.pipeline.max_records,
+            sleep_between=config.pipeline.sleep_between,
+            start_index=start_index,
+        )
+
+
+
+=== FILE: ./udg_catalogue/postprocess.py ===
+from __future__ import annotations
+
+import os
+from collections.abc import Callable, Mapping
+from pathlib import Path
+
+import pandas as pd
+from sci_etl_core.processors import (
+    ClusteringStep,
+    CompletenessStep,
+    DeduplicationStep,
+    KeyNormalizer,
+    NormalizationStep,
+    Processor,
+    ProcessorChain,
+    QualityFlagStep,
+)
+
+from udg_catalogue.astrometry import (
+    UNKNOWN_CONSTELLATION,
+    CartesianDistanceFeatures,
+    ConstellationStep,
+    SkyPositionMatcher,
+)
+from udg_catalogue.config import FRACTION_BOUNDS, KEY_COLUMN, MEASUREMENT_FIELDS, CatalogueConfig
+from udg_catalogue.naming import GalaxyNameNormalizer
+
+NORMALIZED_KEY_COLUMN = "_norm_key"
+LEADING_COLUMNS: tuple[str, ...] = (
+    KEY_COLUMN,
+    "completeness_pct",
+    "quality_flag",
+    "constellation",
+    "cluster_id",
+)
+SORT_ORDER: tuple[tuple[str, bool], ...] = (
+    ("completeness_pct", False),
+    ("constellation", True),
+    ("cluster_id", True),
+    (KEY_COLUMN, True),
+)
+
+
+class ValueClipStep(Processor):
+    def __init__(self, bounds: Mapping[str, tuple[float, float]]) -> None:
+        self._bounds = dict(bounds)
+
+    def process(self, frame: pd.DataFrame) -> pd.DataFrame:
+        frame = frame.copy()
+        for column, (low, high) in self._bounds.items():
+            if column in frame.columns:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").clip(low, high)
+        return frame
+
+
+class CatalogueLayoutStep(Processor):
+    def process(self, frame: pd.DataFrame) -> pd.DataFrame:
+        sort_keys = [(column, ascending) for column, ascending in SORT_ORDER if column in frame.columns]
+        if sort_keys:
+            frame = frame.sort_values(
+                by=[column for column, _ in sort_keys],
+                ascending=[ascending for _, ascending in sort_keys],
+            )
+        public = [column for column in frame.columns if not column.startswith("_")]
+        leading = [column for column in LEADING_COLUMNS if column in public]
+        return frame[leading + [column for column in public if column not in leading]]
+
+
+def build_catalogue_chain(config: CatalogueConfig, normalizer: KeyNormalizer | None = None) -> ProcessorChain:
+    return ProcessorChain(
+        [
+            NormalizationStep(KEY_COLUMN, normalizer or GalaxyNameNormalizer(), NORMALIZED_KEY_COLUMN),
+            DeduplicationStep(
+                NORMALIZED_KEY_COLUMN,
+                matcher=SkyPositionMatcher(),
+                match_threshold=config.deduplication.max_separation_arcsec,
+            ),
+            ValueClipStep(FRACTION_BOUNDS),
+            CompletenessStep(list(MEASUREMENT_FIELDS)),
+            ConstellationStep(),
+            ClusteringStep(
+                CartesianDistanceFeatures(),
+                eps=config.clustering.max_distance_mpc,
+                min_samples=config.clustering.min_samples,
+            ),
+            QualityFlagStep(),
+            CatalogueLayoutStep(),
+        ]
+    )
+
+
+def read_catalogue(path: Path) -> pd.DataFrame:
+    return pd.read_csv(path, dtype={KEY_COLUMN: str}, keep_default_na=False, na_values=[""])
+
+
+def describe_catalogue(catalogue: pd.DataFrame) -> list[str]:
+    known_constellations = catalogue.loc[catalogue["constellation"] != UNKNOWN_CONSTELLATION, "constellation"]
+    clustered = catalogue.loc[catalogue["cluster_id"] != -1, "cluster_id"]
+    return [
+        f"Galaxies in sorted catalogue: {len(catalogue)}",
+        f"Galaxies with 100% completeness: {int((catalogue['completeness_pct'] == 100).sum())}",
+        f"Constellations represented: {known_constellations.nunique()}",
+        f"3D clusters: {clustered.nunique()}",
+    ]
+
+
+def write_catalogue(catalogue: pd.DataFrame, destination: Path) -> None:
+    staging = destination.with_name(f"{destination.name}.tmp")
+    catalogue.to_csv(staging, index=False, encoding="utf-8")
+    os.replace(staging, destination)
+
+
+def build_sorted_catalogue(
+    config: CatalogueConfig,
+    log: Callable[[str], None],
+    normalizer: KeyNormalizer | None = None,
+) -> pd.DataFrame | None:
+    source = config.paths.raw_catalogue
+    if not source.is_file() or source.stat().st_size == 0:
+        log(f"Raw catalogue not found or empty: {source}")
+        return None
+    raw = read_catalogue(source)
+    if raw.empty:
+        log(f"Raw catalogue has no rows: {source}")
+        return None
+    catalogue = build_catalogue_chain(config, normalizer).process(raw)
+    write_catalogue(catalogue, config.paths.sorted_catalogue)
+    for line in describe_catalogue(catalogue):
+        log(line)
+    log(f"Sorted catalogue written to {config.paths.sorted_catalogue}")
+    return catalogue
+
+
+
+=== FILE: ./udg_catalogue/prompts.py ===
+EXTRACTION_PROMPT: str = """You are an astrophysicist. Extract data about ultra-diffuse galaxies (UDG) from the provided text.
+Return data ONLY as a JSON object matching this schema:
+{
+  "galaxies": [
+    {
+      "galaxy_name": "string",
+      "ra": "number",
+      "dec": "number",
+      "distance_mpc": "number",
+      "effective_radius_kpc": "number",
+      "stellar_mass_solar": "number",
+      "dark_matter_fraction": "number" 
+    }
+  ]
+}
+
+CRITICAL RULES FOR OBJECT FILTERING:
+1. ONLY extract REAL, OBSERVED astronomical galaxies (observational data from telescopes).
+2. STRICTLY IGNORE simulated, synthetic, mock, or theoretical galaxies from simulations (e.g., TNG, Illustris, FIRE, EAGLE, ROMULUS, NIHAO, idealised models, toy models, mock catalogues, or generic test objects like "galaxy_1").
+
+CRITICAL FORMATTING RULES FOR NUMERIC VALUES:
+1. "dark_matter_fraction" MUST always be a float between 0.0 and 1.0 (e.g., 0.96). If the text states a percentage like "96%", you MUST divide it by 100 and output 0.96. NEVER output whole integers greater than 1.0 for this field.
+2. If a numeric value is missing, use null. If no galaxies are found, return {"galaxies": []}."""
+
+RELEVANCE_PROMPT: str = """You are an expert astrophysicist reviewer. Analyze the title and abstract.
+Determine strictly if the paper relies exclusively on simulated, synthetic, mock, or theoretical models (e.g., IllustrisTNG, FIRE, EAGLE, hydrodynamical simulations, toy models).
+If the paper presents REAL OBSERVATIONAL measurements from telescopes for Ultra-Diffuse Galaxies, return {"relevant": true}.
+If it is purely a simulation, theoretical work, or mock catalog without new observational UDG data, return {"relevant": false}.
+Return ONLY a JSON object: {"relevant": true} or {"relevant": false}."""
+
+
+
+=== FILE: ./udg_catalogue/validation.py ===
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable
+from typing import Any
+
+from sci_etl_core import AsyncEntityExtractor
+from sci_etl_core.processors import (
+    CompositeValidator,
+    KeywordExclusionValidator,
+    NumericRangeValidator,
+    RecordValidator,
+)
+
+from udg_catalogue.config import KEY_COLUMN, MEASUREMENT_FIELDS
+
+SIMULATION_KEYWORDS: tuple[str, ...] = (
+    "sim",
+    "simulation",
+    "mock",
+    "synthetic",
+    "toy",
+    "model",
+    "tng",
+    "illustris",
+    "fire",
+    "eagle",
+    "romulus",
+    "nihao",
+    "gadget",
+    "gizmo",
+    "subhalo",
+    "test",
+    "example",
+    "idealized",
+    "artific",
+)
+SKY_COORDINATE_RANGES: dict[str, tuple[float, float]] = {"ra": (0.0, 360.0), "dec": (-90.0, 90.0)}
+
+
+class HasAnyMeasurement(RecordValidator):
+    def __init__(self, fields: Iterable[str]) -> None:
+        self._fields = tuple(fields)
+
+    def is_valid(self, record: dict[str, Any]) -> bool:
+        return any(record.get(field) is not None for field in self._fields)
+
+
+class ValidatedEntityExtractor(AsyncEntityExtractor):
+    def __init__(
+        self,
+        inner: AsyncEntityExtractor,
+        validator: RecordValidator,
+        logger: Callable[[str], None] | None = None,
+    ) -> None:
+        self._inner = inner
+        self._validator = validator
+        self._log = logger or (lambda _message: None)
+
+    async def extract(self, text: str | bytes) -> list[dict[str, Any]]:
+        accepted: list[dict[str, Any]] = []
+        for entity in await self._inner.extract(text):
+            if self._validator.is_valid(entity):
+                accepted.append(entity)
+            else:
+                self._log(f"Entity rejected by validation: {entity.get(KEY_COLUMN)!r}")
+        return accepted
+
+
+def build_galaxy_validator() -> RecordValidator:
+    return CompositeValidator(
+        [
+            KeywordExclusionValidator(KEY_COLUMN, list(SIMULATION_KEYWORDS)),
+            NumericRangeValidator(SKY_COORDINATE_RANGES),
+            HasAnyMeasurement(MEASUREMENT_FIELDS),
+        ]
+    )
+
+
+
+=== FILE: ./udg_catalogue/__init__.py ===
+
+
+
