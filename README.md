@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Python](https://img.shields.io/badge/Python-3.11-blue.svg?style=flat-square)](https://www.python.org/)
-[![sci-etl-core](https://img.shields.io/badge/built_on-sci--etl--core_0.2-0b7285.svg?style=flat-square)](https://github.com/xueromll/sci-etl-core)
+[![sci-etl-core](https://img.shields.io/badge/built_on-sci--etl--core_0.4-0b7285.svg?style=flat-square)](https://github.com/xueromll/sci-etl-core)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.63-red.svg?style=flat-square)](https://streamlit.io/)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg?style=flat-square)](https://deepseek.com/)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg?style=flat-square)](#testing)
@@ -57,7 +57,7 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 | **Median record completeness** | 66.7% |
 | **Literature snapshot** | 2026-08-05 |
 | **Total API cost (four full runs)** | US$2.61 |
-| **ETL framework** | sci-etl-core 0.2 |
+| **ETL framework** | sci-etl-core 0.4 |
 
 ### Parameter coverage
 
@@ -267,7 +267,7 @@ pip install -r requirements-local.txt
 python -c "import sci_etl_core; print(sci_etl_core.__file__)"
 ```
 
-The second command should print a path inside your sci-etl-core checkout. An editable install records its absolute path, so reinstall if you move the checkout. `requirements.txt` accepts any 0.2.x release of sci-etl-core; raise the range there to move to a newer minor release after running the tests against it.
+The second command should print a path inside your sci-etl-core checkout. An editable install records its absolute path, so reinstall if you move the checkout. `requirements.txt` accepts any 0.4.x release of sci-etl-core; raise the range there to move to a newer minor release after running the tests against it.
 
 ---
 
