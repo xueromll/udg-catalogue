@@ -30,3 +30,24 @@ def test_has_any_measurement_ignores_missing_values():
 
     assert validator.is_valid({"dec": 0.0})
     assert not validator.is_valid({"ra": None, "distance_mpc": 1.0})
+
+
+def test_validated_extractor_drops_and_logs_rejected_entities():
+    messages = []
+    inner = StaticEntityExtractor(
+        [{"galaxy_name": "DF 44", "ra": 1.0}, {"galaxy_name": "mock_1", "ra": 1.0}]
+    )
+    extractor = ValidatedEntityExtractor(inner, build_galaxy_validator(), logger=messages.append)
+
+    assert asyncio.run(extractor.extract("paper text")) == [{"galaxy_name": "DF 44", "ra": 1.0}]
+    assert inner.texts == ["paper text"]
+    assert messages == ["Entity rejected by validation: 'mock_1'"]
+
+
+def test_validated_extractor_without_logger_drops_silently():
+    extractor = ValidatedEntityExtractor(
+        StaticEntityExtractor([{"galaxy_name": "mock_1", "ra": 1.0}]),
+        build_galaxy_validator(),
+    )
+
+    assert asyncio.run(extractor.extract("paper text")) == []
