@@ -96,6 +96,50 @@ def test_build_sorted_catalogue_writes_the_sorted_file(catalogue_config):
     assert [path.name for path in catalogue_config.paths.sorted_catalogue.parent.glob("*.tmp")] == []
 
 
+def test_build_sorted_catalogue_merges_the_existing_catalogue(catalogue_config):
+    catalogue_config.paths.sorted_catalogue.write_text(
+        "galaxy_name,completeness_pct,quality_flag,constellation,cluster_id,ra,dec,distance_mpc\n"
+        "Kept,33.3,Low Confidence,Orion,-1,83.633,-5.361,\n"
+        "Beta,16.7,Low Confidence,Unknown,-1,,,7.0\n",
+        encoding="utf-8",
+    )
+    catalogue_config.paths.raw_catalogue.write_text(
+        "galaxy_name,ra,dec,distance_mpc\nBeta,10.0,20.0,\n",
+        encoding="utf-8",
+    )
+    messages = []
+
+    catalogue = build_sorted_catalogue(catalogue_config, messages.append)
+
+    rows = read_catalogue(catalogue_config.paths.sorted_catalogue).set_index("galaxy_name")
+    assert sorted(rows.index) == ["Beta", "Kept"]
+    assert rows.loc["Beta", "ra"] == 10.0
+    assert rows.loc["Beta", "distance_mpc"] == 7.0
+    assert rows.loc["Beta", "completeness_pct"] == 100.0
+    assert len(catalogue) == 2
+    assert messages[-1] == f"Sorted catalogue written to {catalogue_config.paths.sorted_catalogue}"
+
+
+def test_build_sorted_catalogue_refuses_to_shrink_the_existing_catalogue(catalogue_config):
+    existing = (
+        "galaxy_name,completeness_pct,quality_flag,constellation,cluster_id,ra,dec\n"
+        "Beta,33.3,Low Confidence,Taurus,-1,10.0,20.0\n"
+        "Beta copy,33.3,Low Confidence,Taurus,-1,10.0001,20.0001\n"
+    )
+    catalogue_config.paths.sorted_catalogue.write_text(existing, encoding="utf-8")
+    catalogue_config.paths.raw_catalogue.write_text("galaxy_name,ra,dec\nBeta,10.0,20.0\n", encoding="utf-8")
+    messages = []
+
+    catalogue = build_sorted_catalogue(catalogue_config, messages.append)
+
+    assert catalogue["galaxy_name"].tolist() == ["Beta", "Beta copy"]
+    assert catalogue_config.paths.sorted_catalogue.read_text(encoding="utf-8") == existing
+    assert messages == [
+        f"Refusing to overwrite {catalogue_config.paths.sorted_catalogue}: the rebuilt catalogue has 1 galaxies "
+        "but the existing one has 2. Move the existing file aside to rebuild from scratch."
+    ]
+
+
 def test_build_sorted_catalogue_skips_missing_or_empty_sources(catalogue_config):
     messages = []
     raw = catalogue_config.paths.raw_catalogue

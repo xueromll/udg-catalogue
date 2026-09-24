@@ -33,6 +33,7 @@ LEADING_COLUMNS: tuple[str, ...] = (
     "constellation",
     "cluster_id",
 )
+DERIVED_COLUMNS: tuple[str, ...] = tuple(column for column in LEADING_COLUMNS if column != KEY_COLUMN)
 SORT_ORDER: tuple[tuple[str, bool], ...] = (
     ("completeness_pct", False),
     ("constellation", True),
@@ -93,6 +94,23 @@ def read_catalogue(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, dtype={KEY_COLUMN: str}, keep_default_na=False, na_values=[""])
 
 
+def read_optional_catalogue(path: Path) -> pd.DataFrame:
+    if not path.is_file() or path.stat().st_size == 0:
+        return pd.DataFrame()
+    return read_catalogue(path)
+
+
+def merge_with_existing(raw: pd.DataFrame, existing: pd.DataFrame) -> pd.DataFrame:
+    """Stack the raw rows ahead of the rows already in the sorted catalogue.
+
+    Derived columns are dropped from the existing rows so the chain recomputes
+    them. Raw rows come first, so deduplication prefers their values and falls
+    back to the existing ones only to fill gaps.
+    """
+    carried = existing.drop(columns=[column for column in DERIVED_COLUMNS if column in existing.columns])
+    return pd.concat([raw, carried], ignore_index=True)
+
+
 def describe_catalogue(catalogue: pd.DataFrame) -> list[str]:
     known_constellations = catalogue.loc[catalogue["constellation"] != UNKNOWN_CONSTELLATION, "constellation"]
     clustered = catalogue.loc[catalogue["cluster_id"] != -1, "cluster_id"]
@@ -116,6 +134,7 @@ def build_sorted_catalogue(
     normalizer: KeyNormalizer | None = None,
 ) -> pd.DataFrame | None:
     source = config.paths.raw_catalogue
+    destination = config.paths.sorted_catalogue
     if not source.is_file() or source.stat().st_size == 0:
         log(f"Raw catalogue not found or empty: {source}")
         return None
@@ -123,9 +142,16 @@ def build_sorted_catalogue(
     if raw.empty:
         log(f"Raw catalogue has no rows: {source}")
         return None
-    catalogue = build_catalogue_chain(config, normalizer).process(raw)
-    write_catalogue(catalogue, config.paths.sorted_catalogue)
+    existing = read_optional_catalogue(destination)
+    catalogue = build_catalogue_chain(config, normalizer).process(merge_with_existing(raw, existing))
+    if len(catalogue) < len(existing):
+        log(
+            f"Refusing to overwrite {destination}: the rebuilt catalogue has {len(catalogue)} galaxies "
+            f"but the existing one has {len(existing)}. Move the existing file aside to rebuild from scratch."
+        )
+        return existing
+    write_catalogue(catalogue, destination)
     for line in describe_catalogue(catalogue):
         log(line)
-    log(f"Sorted catalogue written to {config.paths.sorted_catalogue}")
+    log(f"Sorted catalogue written to {destination}")
     return catalogue
