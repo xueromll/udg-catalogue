@@ -2,23 +2,12 @@ import numpy as np
 import pandas as pd
 
 from udg_catalogue.postprocess import (
-    CatalogueLayoutStep,
-    ValueClipStep,
     build_catalogue_chain,
+    build_catalogue_layout,
     build_sorted_catalogue,
     describe_catalogue,
     read_catalogue,
 )
-
-
-def test_value_clip_step_bounds_present_columns_without_mutating_input():
-    frame = pd.DataFrame({"dark_matter_fraction": [1.5, -0.2, 0.4, np.nan]})
-
-    clipped = ValueClipStep({"dark_matter_fraction": (0.0, 1.0), "absent": (0.0, 1.0)}).process(frame)
-
-    assert clipped["dark_matter_fraction"].tolist()[:3] == [1.0, 0.0, 0.4]
-    assert np.isnan(clipped["dark_matter_fraction"].iloc[3])
-    assert frame["dark_matter_fraction"].iloc[0] == 1.5
 
 
 def test_layout_sorts_rows_orders_columns_and_hides_internal_columns():
@@ -34,7 +23,7 @@ def test_layout_sorts_rows_orders_columns_and_hides_internal_columns():
         }
     )
 
-    laid_out = CatalogueLayoutStep().process(frame)
+    laid_out = build_catalogue_layout().process(frame)
 
     assert laid_out["galaxy_name"].tolist() == ["A", "C", "B"]
     assert laid_out.columns.tolist() == [
@@ -48,7 +37,7 @@ def test_layout_sorts_rows_orders_columns_and_hides_internal_columns():
 
 
 def test_layout_without_sort_columns_keeps_row_order():
-    assert CatalogueLayoutStep().process(pd.DataFrame({"other": [2, 1]}))["other"].tolist() == [2, 1]
+    assert build_catalogue_layout().process(pd.DataFrame({"other": [2, 1]}))["other"].tolist() == [2, 1]
 
 
 def test_catalogue_chain_derives_the_scientific_columns(catalogue_config):

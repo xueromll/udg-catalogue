@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Python](https://img.shields.io/badge/Python-3.11-blue.svg?style=flat-square)](https://www.python.org/)
-[![sci-etl-core](https://img.shields.io/badge/built_on-sci--etl--core_0.2-0b7285.svg?style=flat-square)](https://github.com/xueromll/sci-etl-core)
+[![sci-etl-core](https://img.shields.io/badge/built_on-sci--etl--core_0.4-0b7285.svg?style=flat-square)](https://github.com/xueromll/sci-etl-core)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.63-red.svg?style=flat-square)](https://streamlit.io/)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg?style=flat-square)](https://deepseek.com/)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg?style=flat-square)](#testing)
@@ -13,7 +13,9 @@
 
 > **An automated pipeline that screens astrophysics papers on arXiv and extracts measurements of ultra-diffuse galaxies (UDGs) with DeepSeek V4-Flash. It publishes the results as a cross-matched catalogue of 1,285 objects, explorable through an interactive 3D map and a Streamlit dashboard.**
 >
-> The ETL machinery comes from [sci-etl-core](https://github.com/xueromll/sci-etl-core): arXiv access, LLM steps, CSV upserts, resumable state and dataframe processors. This repository holds the astronomy: prompts, galaxy naming and validation rules, sky-position matching, clustering features and the dashboard.
+> Every relevant paper is also kept in a local paper memory, so the dashboard can search the literature by keyword and by meaning, find the papers that mention a catalogued galaxy, and grow a graph of related papers.
+>
+> The ETL machinery comes from [sci-etl-core](https://github.com/xueromll/sci-etl-core): arXiv access, LLM steps, response caching, CSV upserts, resumable state, dataframe processors, local search, embeddings and discovery graphs. This repository holds the astronomy: prompts, galaxy naming and validation rules, sky-position matching, clustering features and the dashboard.
 
 ---
 
@@ -38,7 +40,10 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 - **Astrometric cross-identification.** Galaxy names are normalised, and records within 3″ on the sky are merged using astropy.
 - **Derived columns.** Each object gets a completeness score, a quality flag, its IAU constellation and a 3D spatial group from DBSCAN.
 - **Interactive exploration.** A Plotly 3D map and a Streamlit dashboard offer filtering, analytics and CSV export.
-- **Fault tolerance.** Requests are retried with backoff, and CSV and state writes are crash-safe. Papers that fail are retried on the next run instead of being marked done.
+- **Paper search.** Each relevant paper's full text is indexed for Boolean keyword search (SQLite FTS5 with BM25) and embedded for search by meaning. Hybrid search fuses both rankings, with category and year filters.
+- **Discovery graphs.** Starting from any paper, the dashboard grows a graph of related papers, linked by similar content or shared authors, and groups them into communities.
+- **Fault tolerance.** Requests are retried with backoff, and CSV and state writes are crash-safe. Papers that fail are retried on the next run instead of being marked done. Ctrl+C lets papers already in progress finish before the run stops.
+- **Cached LLM answers.** Relevance and extraction answers are cached in SQLite, so a rerun or a rebuild never pays twice for the same paper.
 - **Bounded async ingestion.** Up to six papers are processed at once.
 - **Container-ready.** A Dockerfile and a Compose file are included.
 
@@ -57,7 +62,7 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 | **Median record completeness** | 66.7% |
 | **Literature snapshot** | 2026-08-05 |
 | **Total API cost (four full runs)** | US$2.61 |
-| **ETL framework** | sci-etl-core 0.2 |
+| **ETL framework** | sci-etl-core 0.4 |
 
 ### Parameter coverage
 
@@ -78,6 +83,8 @@ flowchart LR
     A["arXiv query<br/>astro-ph.GA, abs: ultra-diffuse"] --> B{"LLM relevance screen<br/>title + abstract"}
     B -- "simulation or theory" --> X["Recorded as screened"]
     B -- "observational" --> C["Full text<br/>LaTeX, then PDF, then abstract"]
+    C --> M["Paper memory<br/>search index + embeddings"]
+    M --> S["Paper search and<br/>discovery graphs"]
     C --> D["LLM extraction<br/>JSON schema"]
     D --> E["Validation"]
     E --> F["Upsert by normalised name<br/>udg_database.csv"]
@@ -88,6 +95,7 @@ flowchart LR
 | Stage | What happens | Code |
 |---|---|---|
 | **Screening** | The query `cat:astro-ph.GA AND abs:ultra-diffuse` is paged from the newest submission. The LLM keeps papers with new observational UDG measurements. Every screened ID is saved and never screened again. | [pipeline.py](udg_catalogue/pipeline.py), [prompts.py](udg_catalogue/prompts.py) |
+| **Paper memory** | Each relevant paper's title, abstract, full text, authors, categories and year go into a keyword index (`paper_index.db`). The full text is also split into 350-word passages and embedded into `paper_memory.db`. A failure here is logged and never costs the paper its extraction. | [literature.py](udg_catalogue/literature.py) |
 | **Extraction** | For each galaxy, the LLM returns `galaxy_name`, `ra`, `dec`, `distance_mpc`, `effective_radius_kpc`, `stellar_mass_solar` and `dark_matter_fraction`. Percentages are converted to fractions, and values the paper doesn't report are `null`. | [prompts.py](udg_catalogue/prompts.py) |
 | **Validation** | A record is rejected if its name is missing or contains a simulation keyword as a whole word (e.g. `tng`, `mock`, `toy`). It is also rejected if RA/Dec fall outside [0°, 360°] / [−90°, 90°], or if all six measurements are empty. | [validation.py](udg_catalogue/validation.py) |
 | **Name matching** | Names are compared after normalisation: NFKC and case folding, punctuation removed, `Dragonfly` → `DF`, leading zeros stripped. So `DF 44`, `DF-44` and `Dragonfly 044` match, while `KDG 44` and `DF 44` stay distinct. A new record only fills a stored row's missing values and never overwrites them. | [naming.py](udg_catalogue/naming.py) |
@@ -146,6 +154,7 @@ Values are extracted automatically, so check them against the original papers be
 | **AI / LLM** | DeepSeek V4-Flash through sci-etl-core's OpenAI-compatible client |
 | **Document parsing** | pdfplumber, LaTeX parsing in sci-etl-core |
 | **Data processing** | pandas, NumPy, scikit-learn (DBSCAN) |
+| **Search** | sci-etl-core search (SQLite FTS5, BM25, rank fusion, discovery graphs), sentence-transformers embeddings |
 | **Astronomy** | astropy (coordinates, cross-matching, constellations) |
 | **Visualization** | Plotly, Matplotlib, seaborn |
 | **Dashboard** | Streamlit |
@@ -160,10 +169,12 @@ Values are extracted automatically, so check them against the original papers be
 udg-catalogue/
 ├── main.py                  # Command-line entrypoint: ingest, post-process, report
 ├── app.py                   # Streamlit dashboard
-├── config.yaml              # Pipeline, paths, clustering and deduplication settings
+├── config.yaml              # Pipeline, paths, embeddings, search, clustering and deduplication settings
 ├── udg_catalogue/
 │   ├── config.py            # CatalogueConfig, built on sci-etl-core's BaseAppConfig
-│   ├── pipeline.py          # Assembles the sci-etl-core ingestion pipeline
+│   ├── pipeline.py          # Assembles the ingestion and paper-indexing pipelines
+│   ├── literature.py        # Paper memory: search index, embeddings, search and discovery graphs
+│   ├── paper_views.py       # Snippet highlighting and graph layout for the dashboard
 │   ├── prompts.py           # LLM system prompts
 │   ├── naming.py            # Galaxy name normalizer used as the catalogue key
 │   ├── validation.py        # Rules every extracted galaxy must pass
@@ -190,6 +201,9 @@ udg-catalogue/
 | `udg_database_sorted.csv` | yes | Released catalogue |
 | `udg_database.csv` | no | Raw upserted extractions, input to post-processing |
 | `processed_arxiv_ids.txt`, `pipeline_meta.json` | no | Resumable pipeline state |
+| `paper_index.db`, `paper_memory.db` | no | Paper memory: keyword index and passage embeddings |
+| `indexed_arxiv_ids.txt`, `indexing_meta.json` | no | Resumable state of `--index-papers` |
+| `llm_cache.db` | no | Cached LLM answers |
 | `analysis/*.png` | no | Statistical figures (300 dpi) |
 | `udg_3d_map.html` | no | Standalone 3D map |
 | `pipeline.log` | no | Run log |
@@ -215,24 +229,46 @@ On Windows, activate with `.venv\Scripts\activate`. Then set `DEEPSEEK_API_KEY` 
 
 | Command | What it does |
 |---------|--------------|
-| `python main.py` | Rescans arXiv from the newest submission and skips papers already screened. Then rebuilds the sorted catalogue, analytics figures and 3D map. |
-| `python main.py --resume` | Continues from the listing offset saved in `pipeline_meta.json` instead of rescanning |
+| `python main.py` | Reads arXiv from the newest submission until it reaches the papers the last run saw first, then continues from the offset saved in `pipeline_meta.json`, so new submissions are picked up without rescanning the whole listing. Papers already screened are skipped. Then rebuilds the sorted catalogue, analytics figures and 3D map. |
+| `python main.py --rescan` | Pages the whole listing from the newest submission, for example after arXiv reorders it |
+| `python main.py --index-papers` | Adds papers screened before the paper memory existed to the search index, without extracting galaxies (see [Paper Search](#paper-search)) |
 | `python main.py --skip-ingestion` | Rebuilds the outputs from an existing `udg_database.csv` without calling arXiv or DeepSeek |
 | `python main.py --config other.yaml` | Uses another configuration file; its paths are resolved relative to that file |
 
-The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing. It is `1` when ingestion was aborted; the outputs are still rebuilt from the data already collected.
+The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing, or `EMBEDDING_API_KEY` with the `openai` embeddings provider. It is `1` when ingestion was aborted; the outputs are still rebuilt from the data already collected. Press Ctrl+C once to stop cleanly: papers in progress finish, the state is saved, and the exit code is `130`. A second Ctrl+C stops at once.
 
 ### Configuration
 
 | Key in `config.yaml` | Default | Purpose |
 |---|---|---|
 | `pipeline.search_query` | `cat:astro-ph.GA AND abs:ultra-diffuse` | arXiv selection query |
-| `pipeline.max_records` | `500` | Relevant papers read in full per run |
-| `pipeline.max_workers` | `6` | Papers processed concurrently |
+| `pipeline.total_limit` | `500` | Relevant papers read in full per run |
+| `pipeline.max_concurrency` | `6` | Papers processed concurrently |
+| `pipeline.newest_first` | `true` | Stop at the papers the last run saw first, then resume from the saved offset |
+| `embeddings.enabled` | `true` | Embed passages for search by meaning; `false` keeps keyword search only |
+| `embeddings.provider` / `embeddings.model` | `local` / `all-MiniLM-L6-v2` | `local` runs sentence-transformers; `openai` calls an OpenAI-compatible endpoint |
+| `embeddings.base_url` | `https://api.openai.com/v1` | Endpoint of the `openai` provider |
+| `embeddings.chunk_words` / `embeddings.overlap_words` | `350` / `50` | Passage length and overlap, in words |
+| `search.graph.depth` / `search.graph.fanout` / `search.graph.max_nodes` | `2` / `8` / `80` | How far and how wide a discovery graph grows |
+| `search.graph.min_weight` | `0.35` | Weakest link kept in a discovery graph |
 | `http.max_retries` / `http.backoff_factor` | `4` / `5.0` | Retry policy for arXiv requests |
 | `deduplication.max_separation_arcsec` | `3.0` | Sky-matching radius |
 | `clustering.max_distance_mpc` | `5.0` | DBSCAN `eps` |
 | `clustering.min_samples` | `2` | DBSCAN `min_samples` |
+
+Configuration written for sci-etl-core 0.2 used `pipeline.max_records` and `pipeline.max_workers`. They still load until sci-etl-core 0.5, with a deprecation warning.
+
+### Paper Search
+
+New papers enter the paper memory as the pipeline reads them. Papers screened before the memory existed are skipped by the pipeline, so index them once:
+
+```bash
+python main.py --index-papers
+```
+
+It lists the arXiv query again, asks DeepSeek whether each paper not yet indexed is relevant, and indexes the relevant ones without extracting galaxies. Its progress is saved in `indexed_arxiv_ids.txt` and `indexing_meta.json`, so it can be stopped and resumed. The relevance answers it gets are cached in `llm_cache.db`.
+
+The default `local` embeddings provider downloads the `all-MiniLM-L6-v2` model (about 90 MB) on first use and needs no API key. To use a hosted model instead, set `embeddings.provider: openai`, a `model` such as `text-embedding-3-small`, and `EMBEDDING_API_KEY` in `.env`. Changing the provider or model makes existing embeddings incomparable with new ones, so delete `paper_memory.db` and run `python main.py --index-papers --rescan` afterwards. `paper_index.db` can stay.
 
 ### Rebuilding the Catalogue From Scratch
 
@@ -241,10 +277,10 @@ The committed catalogue was extracted before the migration to sci-etl-core. At t
 ```bash
 mkdir -p archive
 mv udg_database.csv processed_arxiv_ids.txt pipeline_meta.json archive/
-python main.py
+python main.py --rescan
 ```
 
-A rebuild reprocesses every matching paper, so expect roughly the API cost of one full run (about US$0.65).
+A rebuild reprocesses every matching paper, so expect roughly the API cost of one full run (about US$0.65). Answers already in `llm_cache.db` cost nothing, so move it to `archive/` as well to get fresh answers from the model.
 
 ### Docker (Recommended)
 
@@ -252,7 +288,7 @@ A rebuild reprocesses every matching paper, so expect roughly the API cost of on
 docker compose -f docker.yaml up --build
 ```
 
-The dashboard is served at `http://localhost:8501`. The Compose file passes `DEEPSEEK_API_KEY` from your environment and mounts the project directory, so the container reads and writes the same catalogue files as a local run. To run the pipeline inside the container:
+The dashboard is served at `http://localhost:8501`. The Compose file passes `DEEPSEEK_API_KEY` and `EMBEDDING_API_KEY` from your environment and mounts the project directory, so the container reads and writes the same catalogue files and paper memory as a local run. The image installs the CPU build of PyTorch, and the embedding model is cached in `.cache/` inside the project directory, so it is downloaded once. To run the pipeline inside the container:
 
 ```bash
 docker compose -f docker.yaml run --rm udg-pipeline python main.py
@@ -267,7 +303,7 @@ pip install -r requirements-local.txt
 python -c "import sci_etl_core; print(sci_etl_core.__file__)"
 ```
 
-The second command should print a path inside your sci-etl-core checkout. An editable install records its absolute path, so reinstall if you move the checkout. `requirements.txt` accepts any 0.2.x release of sci-etl-core; raise the range there to move to a newer minor release after running the tests against it.
+The second command should print a path inside your sci-etl-core checkout. An editable install records its absolute path, so reinstall if you move the checkout. `requirements.txt` accepts any 0.4.x release of sci-etl-core; raise the range there to move to a newer minor release after running the tests against it.
 
 ---
 
@@ -283,6 +319,11 @@ The second command should print a path inside your sci-etl-core checkout. An edi
 * **Analytics View.** Stellar mass and effective radius distributions, plus a mass–radius scatter plot coloured by completeness, all computed on the filtered selection.
 * **Data Export.** Download the filtered selection as CSV.
 * **Refresh Data.** Re-run post-processing on `udg_database.csv` without ingesting new papers.
+* **Paper Search.** Search the indexed papers by keyword, by meaning, or both (hybrid), with Boolean syntax such as `"dark matter" -simulation`, `title:dwarf*` or `NEAR(globular cluster, 5)`. Filter by arXiv category and publication year, and see the matching passage of each paper with the matched words highlighted.
+* **Papers Mentioning a Galaxy.** Pick a galaxy from the (filtered) catalogue to find the papers whose text names it.
+* **Related Papers.** Grow a discovery graph around any result: papers linked by similar content or shared authors, coloured by community, with a table of arXiv links.
+
+To point the dashboard at another configuration file, set `UDG_CATALOGUE_CONFIG` to its path.
 
 The map's radial axis is scaled as √distance so that nearby and distant galaxies are visible together. Use the catalogue columns, not the plot axes, for distance measurements.
 
@@ -306,7 +347,7 @@ The map's radial axis is scaled as √distance so that nearby and distant galaxi
 
 ## Testing
 
-The test suite runs offline. arXiv is replaced by an in-memory Atom feed and e-print, DeepSeek by a scripted client, and the dashboard is exercised with Streamlit's `AppTest`.
+The test suite runs offline. arXiv is replaced by an in-memory Atom feed and e-print, DeepSeek by a scripted client, the embedding model by a word-hashing embedder, and the dashboard is exercised with Streamlit's `AppTest`.
 
 ```bash
 pip install -r requirements-dev.txt

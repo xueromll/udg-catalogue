@@ -11,11 +11,12 @@ http:
 
 pipeline:
   search_query: "cat:astro-ph.GA AND abs:ultra-diffuse"
-  max_records: 500
+  total_limit: 500
   page_size: 100
   search_delay: 3.0
   sleep_between: 5.0
-  max_workers: 6
+  max_concurrency: 6
+  newest_first: true
 
 paths:
   raw_catalogue: "udg_database.csv"
@@ -25,6 +26,25 @@ paths:
   html_map: "udg_3d_map.html"
   analytics_dir: "analysis"
   log_file: "pipeline.log"
+  search_index: "paper_index.db"
+  vector_memory: "paper_memory.db"
+  llm_cache: "llm_cache.db"
+  indexed_ids: "indexed_arxiv_ids.txt"
+  indexing_metadata: "indexing_meta.json"
+
+embeddings:
+  enabled: true
+  provider: "local"
+  model: "all-MiniLM-L6-v2"
+  chunk_words: 350
+  overlap_words: 50
+
+search:
+  graph:
+    depth: 2
+    fanout: 8
+    min_weight: 0.35
+    max_nodes: 80
 
 clustering:
   max_distance_mpc: 5.0

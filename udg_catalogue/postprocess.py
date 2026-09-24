@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -11,9 +11,10 @@ from sci_etl_core.processors import (
     DeduplicationStep,
     KeyNormalizer,
     NormalizationStep,
-    Processor,
     ProcessorChain,
     QualityFlagStep,
+    TableLayoutStep,
+    ValueClipStep,
 )
 
 from udg_catalogue.astrometry import (
@@ -26,6 +27,7 @@ from udg_catalogue.config import FRACTION_BOUNDS, KEY_COLUMN, MEASUREMENT_FIELDS
 from udg_catalogue.naming import GalaxyNameNormalizer
 
 NORMALIZED_KEY_COLUMN = "_norm_key"
+INTERNAL_COLUMN_PREFIX = "_"
 LEADING_COLUMNS: tuple[str, ...] = (
     KEY_COLUMN,
     "completeness_pct",
@@ -41,29 +43,12 @@ SORT_ORDER: tuple[tuple[str, bool], ...] = (
 )
 
 
-class ValueClipStep(Processor):
-    def __init__(self, bounds: Mapping[str, tuple[float, float]]) -> None:
-        self._bounds = dict(bounds)
-
-    def process(self, frame: pd.DataFrame) -> pd.DataFrame:
-        frame = frame.copy()
-        for column, (low, high) in self._bounds.items():
-            if column in frame.columns:
-                frame[column] = pd.to_numeric(frame[column], errors="coerce").clip(low, high)
-        return frame
-
-
-class CatalogueLayoutStep(Processor):
-    def process(self, frame: pd.DataFrame) -> pd.DataFrame:
-        sort_keys = [(column, ascending) for column, ascending in SORT_ORDER if column in frame.columns]
-        if sort_keys:
-            frame = frame.sort_values(
-                by=[column for column, _ in sort_keys],
-                ascending=[ascending for _, ascending in sort_keys],
-            )
-        public = [column for column in frame.columns if not column.startswith("_")]
-        leading = [column for column in LEADING_COLUMNS if column in public]
-        return frame[leading + [column for column in public if column not in leading]]
+def build_catalogue_layout() -> TableLayoutStep:
+    return TableLayoutStep(
+        sort_by=SORT_ORDER,
+        leading_columns=LEADING_COLUMNS,
+        hidden_prefixes=(INTERNAL_COLUMN_PREFIX,),
+    )
 
 
 def build_catalogue_chain(config: CatalogueConfig, normalizer: KeyNormalizer | None = None) -> ProcessorChain:
@@ -84,7 +69,7 @@ def build_catalogue_chain(config: CatalogueConfig, normalizer: KeyNormalizer | N
                 min_samples=config.clustering.min_samples,
             ),
             QualityFlagStep(),
-            CatalogueLayoutStep(),
+            build_catalogue_layout(),
         ]
     )
 

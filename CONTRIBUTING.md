@@ -58,7 +58,9 @@ The generic ETL machinery lives in [sci-etl-core](https://github.com/xueromll/sc
 | `udg_catalogue/validation.py` | `RecordValidator` rules applied to every extracted galaxy |
 | `udg_catalogue/astrometry.py` | `NeighborMatcher`, `FeatureExtractor` and `Processor` implementations built on astropy |
 | `udg_catalogue/postprocess.py` | `ProcessorChain` producing the sorted catalogue |
-| `udg_catalogue/pipeline.py` | Assembly of the sci-etl-core ingestion pipeline |
+| `udg_catalogue/pipeline.py` | Assembly of the sci-etl-core ingestion and paper-indexing pipelines |
+| `udg_catalogue/literature.py` | Paper memory built from sci-etl-core's search index, embeddings and discovery graphs |
+| `udg_catalogue/paper_views.py` | Snippet highlighting and graph layout for the dashboard's paper search |
 | `udg_catalogue/maps.py`, `udg_catalogue/analytics.py` | Figures shared by `main.py` and the dashboard |
 
 Changes that would benefit any scientific corpus, not just this catalogue, belong in sci-etl-core. Examples include new extractors, parsers, exporters and generic processors.
@@ -91,7 +93,7 @@ Some changes alter which objects are catalogued or what values they carry: promp
 ## 7. Testing Requirements
 
 - Tests use `pytest` and `pytest-cov`.
-- **All tests must run offline.** Replace arXiv with `httpx.MockTransport` and DeepSeek with a scripted `AsyncLLMClient`, as in `tests/test_pipeline.py`.
+- **All tests must run offline.** Replace arXiv with `httpx.MockTransport`, DeepSeek with a scripted `AsyncLLMClient`, and the embedding model with the `HashingEmbedder` in `tests/fakes.py`, as in `tests/test_pipeline.py`.
 - Line coverage of `udg_catalogue` and `main.py` must remain at 100%. The threshold is enforced by `pyproject.toml` and by continuous integration.
 
 ```bash

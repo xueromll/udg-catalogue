@@ -1,7 +1,7 @@
 import logging
 
 import pytest
-from sci_etl_core import PipelineAborted
+from sci_etl_core import EmbeddingError, PipelineAborted, PipelineInterrupted, ShutdownSignal
 
 import main as entrypoint
 from udg_catalogue.config import API_KEY_ENV_VAR
@@ -20,7 +20,7 @@ async def ingestion_must_not_run(*_arguments):
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    (tmp_path / "config.yaml").write_text("pipeline:\n  max_records: 3\n", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text("pipeline:\n  total_limit: 3\n", encoding="utf-8")
     (tmp_path / "udg_database.csv").write_text(RAW_CATALOGUE, encoding="utf-8")
     monkeypatch.setattr(entrypoint, "configure_logging", lambda name, _log_file: logging.getLogger(f"test.{name}"))
     return tmp_path
@@ -58,20 +58,79 @@ def test_missing_api_key_stops_before_ingestion(project, monkeypatch):
     assert not (project / "udg_database_sorted.csv").exists()
 
 
-def test_ingestion_rescans_newest_submissions_unless_resuming(project, monkeypatch):
+def test_ingestion_follows_the_config_unless_rescanning(project, monkeypatch):
     monkeypatch.setenv(API_KEY_ENV_VAR, "sk-test")
     calls = []
 
-    async def record_ingestion(config, _logger, start_index):
-        calls.append((config.pipeline.max_records, start_index))
+    async def record_ingestion(config, _logger, start_index, shutdown):
+        calls.append((config.pipeline.total_limit, start_index, isinstance(shutdown, ShutdownSignal)))
         return 2
 
     monkeypatch.setattr(entrypoint, "run_ingestion", record_ingestion)
+    monkeypatch.setattr(entrypoint, "run_paper_indexing", ingestion_must_not_run)
 
     assert run_main(project) == entrypoint.EXIT_OK
-    assert run_main(project, "--resume") == entrypoint.EXIT_OK
+    assert run_main(project, "--rescan") == entrypoint.EXIT_OK
 
-    assert calls == [(3, 0), (3, None)]
+    assert calls == [(3, None, True), (3, 0, True)]
+    assert (project / "udg_database_sorted.csv").is_file()
+
+
+def test_index_papers_indexes_without_ingesting_or_rebuilding(project, monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "sk-test")
+    calls = []
+
+    async def record_indexing(_config, _logger, start_index, _shutdown):
+        calls.append(start_index)
+        return 5
+
+    monkeypatch.setattr(entrypoint, "run_ingestion", ingestion_must_not_run)
+    monkeypatch.setattr(entrypoint, "run_paper_indexing", record_indexing)
+
+    assert run_main(project, "--index-papers", "--rescan") == entrypoint.EXIT_OK
+
+    assert calls == [0]
+    assert not (project / "udg_database_sorted.csv").exists()
+
+
+def test_index_papers_and_skip_ingestion_are_exclusive(project):
+    with pytest.raises(SystemExit):
+        run_main(project, "--index-papers", "--skip-ingestion")
+
+
+def test_missing_embedding_key_stops_before_ingestion(project, monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "sk-test")
+    monkeypatch.setattr(entrypoint, "run_ingestion", ingestion_must_not_run)
+    (project / "config.yaml").write_text("embeddings:\n  provider: openai\n", encoding="utf-8")
+
+    assert run_main(project) == entrypoint.EXIT_MISSING_API_KEY
+
+    assert not (project / "udg_database_sorted.csv").exists()
+
+
+def test_interrupted_ingestion_stops_without_rebuilding(project, monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "sk-test")
+
+    async def interrupt_ingestion(*_arguments):
+        raise PipelineInterrupted("Run stopped by a shutdown request", 1)
+
+    monkeypatch.setattr(entrypoint, "run_ingestion", interrupt_ingestion)
+
+    assert run_main(project) == entrypoint.EXIT_INTERRUPTED
+
+    assert not (project / "udg_database_sorted.csv").exists()
+
+
+def test_unavailable_paper_memory_aborts_ingestion_but_rebuilds_outputs(project, monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "sk-test")
+
+    async def fail_to_open_memory(*_arguments):
+        raise EmbeddingError("sentence-transformers is required for local embedding")
+
+    monkeypatch.setattr(entrypoint, "run_ingestion", fail_to_open_memory)
+
+    assert run_main(project) == entrypoint.EXIT_INGESTION_ABORTED
+
     assert (project / "udg_database_sorted.csv").is_file()
 
 

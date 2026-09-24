@@ -8,6 +8,7 @@ services:
       - "8501:8501"
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
     volumes:
       - .:/app
     restart: unless-stopped

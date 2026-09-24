@@ -1,2 +1,2 @@
 -r requirements-app.txt
--e ../../sci-etl-core[async,llm,pdf,cluster]
+-e ../../sci-etl-core[async,llm,pdf,cluster,embeddings,embeddings-local,search]

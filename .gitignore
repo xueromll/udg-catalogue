@@ -9,6 +9,12 @@ udg_database.csv.bak
 *.tmp
 processed_arxiv_ids.txt
 pipeline_meta.json
+indexed_arxiv_ids.txt
+indexing_meta.json
+paper_index.db*
+paper_memory.db*
+llm_cache.db*
+.cache/
 
 pipeline.log
 correlation_heatmap.png

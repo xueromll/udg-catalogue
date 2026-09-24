@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from typing import Any
 
-from sci_etl_core import AsyncEntityExtractor
 from sci_etl_core.processors import (
     CompositeValidator,
     KeywordExclusionValidator,
@@ -43,27 +42,6 @@ class HasAnyMeasurement(RecordValidator):
 
     def is_valid(self, record: dict[str, Any]) -> bool:
         return any(record.get(field) is not None for field in self._fields)
-
-
-class ValidatedEntityExtractor(AsyncEntityExtractor):
-    def __init__(
-        self,
-        inner: AsyncEntityExtractor,
-        validator: RecordValidator,
-        logger: Callable[[str], None] | None = None,
-    ) -> None:
-        self._inner = inner
-        self._validator = validator
-        self._log = logger or (lambda _message: None)
-
-    async def extract(self, text: str | bytes) -> list[dict[str, Any]]:
-        accepted: list[dict[str, Any]] = []
-        for entity in await self._inner.extract(text):
-            if self._validator.is_valid(entity):
-                accepted.append(entity)
-            else:
-                self._log(f"Entity rejected by validation: {entity.get(KEY_COLUMN)!r}")
-        return accepted
 
 
 def build_galaxy_validator() -> RecordValidator:
