@@ -8,10 +8,9 @@ import pandas as pd
 import pytest
 from fakes import HashingEmbedder
 from pydantic import SecretStr
-from sci_etl_core import AsyncLLMClient, PipelineInterrupted, ShutdownSignal, TokenUsage
+from sci_etl_core import AsyncLLMClient, PipelineInterrupted, ShutdownSignal
 from sci_etl_core.config import PipelineConfig
 from sci_etl_core.embeddings import AsyncSqliteEmbeddingStore
-from sci_etl_core.observability import PageFetched, PageFinished, RunFinished, RunMetrics
 from sci_etl_core.search import AsyncSqliteFts5Store
 
 from udg_catalogue import literature as literature_module
@@ -19,8 +18,6 @@ from udg_catalogue import pipeline as pipeline_module
 from udg_catalogue.config import PAPER_FACET_KEYS
 from udg_catalogue.pipeline import (
     EXTRACTION_RESULT_KEY,
-    describe_run,
-    progress_logger,
     run_arguments,
     run_ingestion,
     run_paper_indexing,
@@ -166,7 +163,10 @@ def test_ingestion_exports_galaxies_and_remembers_each_relevant_paper(ingestion_
             "dark_matter_fraction": 1.0,
         }
     ]
-    assert "Entity rejected by validation: 'mock_udg_1'" in caplog.messages
+    assert any(
+        message.endswith("Rejected galaxy 'mock_udg_1': name matches simulation keyword 'mock'")
+        for message in caplog.messages
+    )
     assert set(ingestion_config.paths.processed_ids.read_text(encoding="utf-8").split()) == {
         OBSERVATIONAL_ID,
         SIMULATED_ID,
@@ -282,38 +282,3 @@ def test_shutdown_request_stops_the_run_before_any_paper(ingestion_config, monke
 
     assert llm.calls == []
     assert llm.closed
-
-
-def test_run_summary_reports_outcome_counts_and_tokens():
-    metrics = RunMetrics(
-        pages=2,
-        processed=3,
-        irrelevant=4,
-        failed=1,
-        entities_exported=7,
-        memory_faults=0,
-        duration_seconds=12.4,
-        outcome="completed",
-    )
-
-    assert describe_run(metrics) == (
-        "Run completed in 12s: 2 pages, 3 relevant, 4 irrelevant, 1 failed, "
-        "7 galaxies exported, 0 memory faults"
-    )
-    metrics.token_usage = TokenUsage(requests=5, prompt_tokens=900, completion_tokens=100)
-    assert describe_run(metrics).endswith(", 1000 tokens in 5 requests")
-
-
-def test_progress_logger_reports_pages_and_the_finished_run():
-    messages = []
-    on_event = progress_logger(messages.append)
-    metrics = RunMetrics(processed=1, irrelevant=2, outcome="completed")
-
-    on_event(PageFetched(offset=0, entries=3, new_records=3))
-    on_event(PageFinished(offset=0, duration_seconds=1.25, metrics=metrics))
-    on_event(RunFinished(metrics=metrics))
-
-    assert messages == [
-        "Page at offset 0 finished in 1.2s; so far 1 relevant, 2 irrelevant, 0 failed",
-        describe_run(metrics),
-    ]

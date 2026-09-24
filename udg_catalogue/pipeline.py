@@ -22,7 +22,6 @@ from sci_etl_core import (
     ShutdownSignal,
 )
 from sci_etl_core.config import PipelineConfig
-from sci_etl_core.observability import PageFinished, PipelineEvent, RunFinished, RunMetrics
 from sci_etl_core.parsers import LatexTarballParser, PdfPlumberParser
 from sci_etl_core.search import AsyncTextSearchStore
 
@@ -31,7 +30,7 @@ from udg_catalogue.literature import PaperLibrary, build_chunker, open_paper_lib
 from udg_catalogue.naming import GalaxyNameNormalizer
 from udg_catalogue.progress import LoggingExtractor, LoggingParser, LoggingRelevanceFilter, PipelineEventLogger
 from udg_catalogue.prompts import EXTRACTION_PROMPT, RELEVANCE_PROMPT
-from udg_catalogue.validation import build_galaxy_validator
+from udg_catalogue.validation import ValidatedEntityExtractor, build_galaxy_validator
 
 EXTRACTION_RESULT_KEY = "galaxies"
 PipelineBuilder = Callable[..., AsyncETLPipeline]
@@ -51,32 +50,6 @@ class UnindexedRelevanceFilter(AsyncRelevanceFilter):
         if await self._text_store.get_documents([record.record_id]):
             return False
         return await self._inner.is_relevant(record)
-
-
-def describe_run(metrics: RunMetrics) -> str:
-    summary = (
-        f"Run {metrics.outcome} in {metrics.duration_seconds:.0f}s: {metrics.pages} pages, "
-        f"{metrics.processed} relevant, {metrics.irrelevant} irrelevant, {metrics.failed} failed, "
-        f"{metrics.entities_exported} galaxies exported, {metrics.memory_faults} memory faults"
-    )
-    if metrics.token_usage is None:
-        return summary
-    usage = metrics.token_usage
-    return f"{summary}, {usage.total_tokens} tokens in {usage.requests} requests"
-
-
-def progress_logger(log: Callable[[str], None]) -> Callable[[PipelineEvent], None]:
-    def on_event(event: PipelineEvent) -> None:
-        if isinstance(event, PageFinished):
-            metrics = event.metrics
-            log(
-                f"Page at offset {event.offset} finished in {event.duration_seconds:.1f}s; so far "
-                f"{metrics.processed} relevant, {metrics.irrelevant} irrelevant, {metrics.failed} failed"
-            )
-        elif isinstance(event, RunFinished):
-            log(describe_run(event.metrics))
-
-    return on_event
 
 
 def build_catalogue_exporter() -> AsyncCsvUpsertExporter:
@@ -100,15 +73,16 @@ def build_entity_extractor(
     config: CatalogueConfig,
     llm_client: AsyncLLMClient,
     logger: logging.Logger,
-) -> AsyncLLMEntityExtractor:
-    return AsyncLLMEntityExtractor(
-        llm_client=llm_client,
-        system_prompt=EXTRACTION_PROMPT,
-        result_key=EXTRACTION_RESULT_KEY,
-        timeout=config.llm.timeout,
-        validator=build_galaxy_validator(),
+) -> ValidatedEntityExtractor:
+    return ValidatedEntityExtractor(
+        AsyncLLMEntityExtractor(
+            llm_client=llm_client,
+            system_prompt=EXTRACTION_PROMPT,
+            result_key=EXTRACTION_RESULT_KEY,
+            timeout=config.llm.timeout,
+        ),
+        build_galaxy_validator(),
         logger=logger.info,
-        label_field=KEY_COLUMN,
     )
 
 
@@ -139,48 +113,83 @@ def _assemble(
         config.http,
         config.pipeline,
         client=http_client,
-        pdf_parser=PdfPlumberParser(),
-        latex_parser=LatexTarballParser(),
-        max_retries=config.http.max_retries,
-        backoff_factor=config.http.backoff_factor,
-        sleep_before_search=config.pipeline.search_delay,
+        pdf_parser=LoggingParser(PdfPlumberParser(), "PDF", logger.info),
+        latex_parser=LoggingParser(LatexTarballParser(), "LaTeX source", logger.info),
         logger=logger.info,
     )
-    entity_extractor = ValidatedEntityExtractor(
-        AsyncLLMEntityExtractor(
-            llm_client=llm_client,
-            system_prompt=EXTRACTION_PROMPT,
-            result_key=EXTRACTION_RESULT_KEY,
-            timeout=config.llm.timeout,
-        ),
-        build_galaxy_validator(),
-        logger=logger.info,
-    )
-    return AsyncETLPipeline(
-        extractor=extractor,
-        relevance_filter=AsyncLLMRelevanceFilter(llm_client=llm_client, system_prompt=RELEVANCE_PROMPT),
+    return AsyncETLPipeline.from_config(
+        config.pipeline,
+        extractor=LoggingExtractor(extractor, logger.info),
+        relevance_filter=LoggingRelevanceFilter(relevance_filter, logger.info),
         entity_extractor=entity_extractor,
         exporter=build_catalogue_exporter(),
         state_manager=state_manager,
         destination=str(config.paths.raw_catalogue),
         logger=logger.warning,
-        closeables=[http_client, llm_client],
+        closeables=[http_client, llm_client, cache, *library.closeables],
+        memory_ingestor=library.memory_ingestor(build_chunker(config.embeddings), logger.warning),
+        shutdown=shutdown,
+        on_event=PipelineEventLogger(logger.info, logger.warning),
+        usage_sources=[llm_client, *library.usage_sources],
     )
 
 
-async def run_ingestion(config: CatalogueConfig, logger: logging.Logger, start_index: int | None = 0) -> int:
-    http_client = build_async_client(timeout=config.http.timeout, user_agent=config.http.user_agent)
-    llm_client = AsyncOpenAICompatibleClient(
-        api_key=config.llm.api_key,
-        base_url=config.llm.base_url,
-        model=config.llm.model,
-        default_timeout=config.llm.timeout,
-    )
-    async with build_pipeline(config, logger, http_client, llm_client) as pipeline:
-        return await pipeline.run(
-            query=config.pipeline.search_query,
-            page_size=config.pipeline.page_size,
-            total_limit=config.pipeline.max_records,
-            sleep_between=config.pipeline.sleep_between,
-            start_index=start_index,
-        )
+def build_pipeline(
+    config: CatalogueConfig,
+    logger: logging.Logger,
+    http_client: httpx.AsyncClient,
+    llm_client: AsyncLLMClient,
+    library: PaperLibrary,
+    shutdown: ShutdownSignal | None = None,
+) -> AsyncETLPipeline:
+    return _assemble(config, logger, http_client, llm_client, library, shutdown, indexing=False)
+
+
+def build_indexing_pipeline(
+    config: CatalogueConfig,
+    logger: logging.Logger,
+    http_client: httpx.AsyncClient,
+    llm_client: AsyncLLMClient,
+    library: PaperLibrary,
+    shutdown: ShutdownSignal | None = None,
+) -> AsyncETLPipeline:
+    return _assemble(config, logger, http_client, llm_client, library, shutdown, indexing=True)
+
+
+def run_arguments(pipeline: PipelineConfig, start_index: int | None) -> dict[str, Any]:
+    arguments = pipeline.run_arguments()
+    if start_index is not None:
+        arguments.update(start_index=start_index, newest_first=False)
+    return arguments
+
+
+async def _run(
+    build: PipelineBuilder,
+    config: CatalogueConfig,
+    logger: logging.Logger,
+    start_index: int | None,
+    shutdown: ShutdownSignal | None,
+) -> int:
+    library = open_paper_library(config)
+    http_client = build_http_client(config)
+    llm_client = build_llm_client(config)
+    async with build(config, logger, http_client, llm_client, library, shutdown) as pipeline:
+        return await pipeline.run(**run_arguments(config.pipeline, start_index))
+
+
+async def run_ingestion(
+    config: CatalogueConfig,
+    logger: logging.Logger,
+    start_index: int | None = None,
+    shutdown: ShutdownSignal | None = None,
+) -> int:
+    return await _run(build_pipeline, config, logger, start_index, shutdown)
+
+
+async def run_paper_indexing(
+    config: CatalogueConfig,
+    logger: logging.Logger,
+    start_index: int | None = None,
+    shutdown: ShutdownSignal | None = None,
+) -> int:
+    return await _run(build_indexing_pipeline, config, logger, start_index, shutdown)
