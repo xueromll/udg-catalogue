@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 ENV HF_HOME=/app/.cache/huggingface
 
-COPY requirements.txt requirements-app.txt ./
+COPY requirements.txt ./
+COPY requirements/ requirements/
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .

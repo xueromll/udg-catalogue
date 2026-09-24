@@ -136,6 +136,7 @@ def write_3d_map(catalogue: pd.DataFrame, destination: Path, log: Callable[[str]
     if map_frame.empty:
         log("3D map skipped: no galaxies have RA, Dec and distance")
         return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
     build_3d_figure(map_frame).write_html(destination)
     log(f"3D map written to {destination}")
     return True

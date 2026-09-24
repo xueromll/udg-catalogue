@@ -1,0 +1,16 @@
+.git/
+.github/
+.venv/
+.vscode/
+.cache/
+**/__pycache__/
+.pytest_cache/
+.coverage
+.env
+data/*
+!data/udg_database_sorted.csv
+output/
+assets/
+tests/
+code.txt
+*.mp4

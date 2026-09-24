@@ -108,6 +108,7 @@ def describe_catalogue(catalogue: pd.DataFrame) -> list[str]:
 
 
 def write_catalogue(catalogue: pd.DataFrame, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
     staging = destination.with_name(f"{destination.name}.tmp")
     catalogue.to_csv(staging, index=False, encoding="utf-8")
     os.replace(staging, destination)

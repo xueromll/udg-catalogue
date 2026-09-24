@@ -15,6 +15,7 @@ def isolated_api_key(monkeypatch):
 
 @pytest.fixture
 def catalogue_config(tmp_path):
+    (tmp_path / "data").mkdir()
     config = CatalogueConfig()
     return config.model_copy(update={"paths": config.paths.anchored_at(tmp_path)})
 

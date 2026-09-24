@@ -30,7 +30,7 @@ python main.py
 streamlit run app.py
 ```
 
-Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also works without it, because it reads the committed `udg_database_sorted.csv`. For all options, see [Installation and Usage](#installation-and-usage).
+Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also works without it, because it reads the committed `data/udg_database_sorted.csv`. For all options, see [Installation and Usage](#installation-and-usage).
 
 ## Key Features
 
@@ -113,7 +113,7 @@ flowchart LR
 
 ## Catalogue Schema
 
-`udg_database_sorted.csv` has one row per object. Rows are sorted by completeness (descending), then by constellation, cluster and name.
+`data/udg_database_sorted.csv` has one row per object. Rows are sorted by completeness (descending), then by constellation, cluster and name.
 
 | Column | Type | Unit | Description |
 |---|---|---|---|
@@ -170,6 +170,9 @@ udg-catalogue/
 ├── main.py                  # Command-line entrypoint: ingest, post-process, report
 ├── app.py                   # Streamlit dashboard
 ├── config.yaml              # Pipeline, paths, embeddings, search, clustering and deduplication settings
+├── data/
+│   └── udg_database_sorted.csv  # Released catalogue; local pipeline state is written here too
+├── output/                  # Figures, 3D map and run log (generated, not committed)
 ├── udg_catalogue/
 │   ├── config.py            # CatalogueConfig, built on sci-etl-core's BaseAppConfig
 │   ├── pipeline.py          # Assembles the ingestion and paper-indexing pipelines
@@ -185,11 +188,12 @@ udg-catalogue/
 ├── tests/                   # Offline test suite
 ├── assets/                  # README screenshots
 ├── requirements.txt         # Runtime install with sci-etl-core from PyPI
-├── requirements-local.txt   # Runtime install against a local sci-etl-core checkout
-├── requirements-app.txt     # Pinned third-party dependencies
-├── requirements-dev.txt     # Test dependencies
+├── requirements/
+│   ├── app.txt              # Pinned third-party dependencies
+│   ├── dev.txt              # Test dependencies
+│   └── local.txt            # Runtime install against a local sci-etl-core checkout
 ├── Dockerfile               # Container setup
-├── docker.yaml              # Docker Compose file
+├── compose.yaml             # Docker Compose file
 ├── LICENSE                  # MIT License
 └── README.md                # This file
 ```
@@ -198,15 +202,17 @@ udg-catalogue/
 
 | File | Committed | Contents |
 |---|---|---|
-| `udg_database_sorted.csv` | yes | Released catalogue |
-| `udg_database.csv` | no | Raw upserted extractions, input to post-processing |
-| `processed_arxiv_ids.txt`, `pipeline_meta.json` | no | Resumable pipeline state |
-| `paper_index.db`, `paper_memory.db` | no | Paper memory: keyword index and passage embeddings |
-| `indexed_arxiv_ids.txt`, `indexing_meta.json` | no | Resumable state of `--index-papers` |
-| `llm_cache.db` | no | Cached LLM answers |
-| `analysis/*.png` | no | Statistical figures (300 dpi) |
-| `udg_3d_map.html` | no | Standalone 3D map |
-| `pipeline.log` | no | Run log |
+| `data/udg_database_sorted.csv` | yes | Released catalogue |
+| `data/udg_database.csv` | no | Raw upserted extractions, input to post-processing |
+| `data/processed_arxiv_ids.txt`, `data/pipeline_meta.json` | no | Resumable pipeline state |
+| `data/paper_index.db`, `data/paper_memory.db` | no | Paper memory: keyword index and passage embeddings |
+| `data/indexed_arxiv_ids.txt`, `data/indexing_meta.json` | no | Resumable state of `--index-papers` |
+| `data/llm_cache.db` | no | Cached LLM answers |
+| `output/figures/*.png` | no | Statistical figures (300 dpi) |
+| `output/udg_3d_map.html` | no | Standalone 3D map |
+| `output/pipeline.log` | no | Run log |
+
+Every location can be changed under `paths` in `config.yaml`. Relative paths are resolved against the directory that holds the config file.
 
 ---
 
@@ -268,7 +274,7 @@ python main.py --index-papers
 
 It lists the arXiv query again, asks DeepSeek whether each paper not yet indexed is relevant, and indexes the relevant ones without extracting galaxies. Its progress is saved in `indexed_arxiv_ids.txt` and `indexing_meta.json`, so it can be stopped and resumed. The relevance answers it gets are cached in `llm_cache.db`.
 
-The default `local` embeddings provider downloads the `all-MiniLM-L6-v2` model (about 90 MB) on first use and needs no API key. To use a hosted model instead, set `embeddings.provider: openai`, a `model` such as `text-embedding-3-small`, and `EMBEDDING_API_KEY` in `.env`. Changing the provider or model makes existing embeddings incomparable with new ones, so delete `paper_memory.db` and run `python main.py --index-papers --rescan` afterwards. `paper_index.db` can stay.
+The default `local` embeddings provider downloads the `all-MiniLM-L6-v2` model (about 90 MB) on first use and needs no API key. To use a hosted model instead, set `embeddings.provider: openai`, a `model` such as `text-embedding-3-small`, and `EMBEDDING_API_KEY` in `.env`. Changing the provider or model makes existing embeddings incomparable with new ones, so delete `data/paper_memory.db` and run `python main.py --index-papers --rescan` afterwards. `paper_index.db` can stay.
 
 ### Rebuilding the Catalogue From Scratch
 
@@ -276,30 +282,30 @@ The committed catalogue was extracted before the migration to sci-etl-core. At t
 
 ```bash
 mkdir -p archive
-mv udg_database.csv processed_arxiv_ids.txt pipeline_meta.json archive/
+mv data/udg_database.csv data/processed_arxiv_ids.txt data/pipeline_meta.json archive/
 python main.py --rescan
 ```
 
-A rebuild reprocesses every matching paper, so expect roughly the API cost of one full run (about US$0.65). Answers already in `llm_cache.db` cost nothing, so move it to `archive/` as well to get fresh answers from the model.
+A rebuild reprocesses every matching paper, so expect roughly the API cost of one full run (about US$0.65). Answers already in `data/llm_cache.db` cost nothing, so move it to `archive/` as well to get fresh answers from the model.
 
 ### Docker (Recommended)
 
 ```bash
-docker compose -f docker.yaml up --build
+docker compose up --build
 ```
 
 The dashboard is served at `http://localhost:8501`. The Compose file passes `DEEPSEEK_API_KEY` and `EMBEDDING_API_KEY` from your environment and mounts the project directory, so the container reads and writes the same catalogue files and paper memory as a local run. The image installs the CPU build of PyTorch, and the embedding model is cached in `.cache/` inside the project directory, so it is downloaded once. To run the pipeline inside the container:
 
 ```bash
-docker compose -f docker.yaml run --rm udg-pipeline python main.py
+docker compose run --rm udg-pipeline python main.py
 ```
 
 ### Developing Against a Local sci-etl-core
 
-To change the library and this project together, install sci-etl-core in editable mode instead of from PyPI. `requirements-local.txt` expects the checkout at `../../sci-etl-core`; adjust the path if yours lives elsewhere.
+To change the library and this project together, install sci-etl-core in editable mode instead of from PyPI. `requirements/local.txt` expects the checkout at `../../sci-etl-core`, relative to the project root that you run pip from; adjust the path if yours lives elsewhere.
 
 ```bash
-pip install -r requirements-local.txt
+pip install -r requirements/local.txt
 python -c "import sci_etl_core; print(sci_etl_core.__file__)"
 ```
 
@@ -318,7 +324,7 @@ The second command should print a path inside your sci-etl-core checkout. An edi
 * **Data Table.** Paginated view with 10, 50 or 100 objects per page.
 * **Analytics View.** Stellar mass and effective radius distributions, plus a mass–radius scatter plot coloured by completeness, all computed on the filtered selection.
 * **Data Export.** Download the filtered selection as CSV.
-* **Refresh Data.** Re-run post-processing on `udg_database.csv` without ingesting new papers.
+* **Refresh Data.** Re-run post-processing on `data/udg_database.csv` without ingesting new papers.
 * **Paper Search.** Search the indexed papers by keyword, by meaning, or both (hybrid), with Boolean syntax such as `"dark matter" -simulation`, `title:dwarf*` or `NEAR(globular cluster, 5)`. Filter by arXiv category and publication year, and see the matching passage of each paper with the matched words highlighted.
 * **Papers Mentioning a Galaxy.** Pick a galaxy from the (filtered) catalogue to find the papers whose text names it.
 * **Related Papers.** Grow a discovery graph around any result: papers linked by similar content or shared authors, coloured by community, with a table of arXiv links.
@@ -350,7 +356,7 @@ The map's radial axis is scaled as √distance so that nearby and distant galaxi
 The test suite runs offline. arXiv is replaced by an in-memory Atom feed and e-print, DeepSeek by a scripted client, the embedding model by a word-hashing embedder, and the dashboard is exercised with Streamlit's `AppTest`.
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements/dev.txt
 pytest --cov
 ```
 

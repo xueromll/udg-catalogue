@@ -19,18 +19,18 @@ pipeline:
   newest_first: true
 
 paths:
-  raw_catalogue: "udg_database.csv"
-  sorted_catalogue: "udg_database_sorted.csv"
-  processed_ids: "processed_arxiv_ids.txt"
-  pipeline_metadata: "pipeline_meta.json"
-  html_map: "udg_3d_map.html"
-  analytics_dir: "analysis"
-  log_file: "pipeline.log"
-  search_index: "paper_index.db"
-  vector_memory: "paper_memory.db"
-  llm_cache: "llm_cache.db"
-  indexed_ids: "indexed_arxiv_ids.txt"
-  indexing_metadata: "indexing_meta.json"
+  raw_catalogue: "data/udg_database.csv"
+  sorted_catalogue: "data/udg_database_sorted.csv"
+  processed_ids: "data/processed_arxiv_ids.txt"
+  pipeline_metadata: "data/pipeline_meta.json"
+  html_map: "output/udg_3d_map.html"
+  analytics_dir: "output/figures"
+  log_file: "output/pipeline.log"
+  search_index: "data/paper_index.db"
+  vector_memory: "data/paper_memory.db"
+  llm_cache: "data/llm_cache.db"
+  indexed_ids: "data/indexed_arxiv_ids.txt"
+  indexing_metadata: "data/indexing_meta.json"
 
 embeddings:
   enabled: true

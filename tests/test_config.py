@@ -27,9 +27,9 @@ def test_repository_config_loads_with_project_relative_paths(monkeypatch):
     assert config.pipeline.max_concurrency == 6
     assert config.pipeline.newest_first
     assert config.embeddings.provider == "local"
-    assert config.paths.raw_catalogue == PROJECT_ROOT / "udg_database.csv"
-    assert config.paths.processed_ids == PROJECT_ROOT / "processed_arxiv_ids.txt"
-    assert config.paths.search_index == PROJECT_ROOT / "paper_index.db"
+    assert config.paths.raw_catalogue == PROJECT_ROOT / "data" / "udg_database.csv"
+    assert config.paths.processed_ids == PROJECT_ROOT / "data" / "processed_arxiv_ids.txt"
+    assert config.paths.search_index == PROJECT_ROOT / "data" / "paper_index.db"
     assert DEFAULT_CONFIG_PATH == PROJECT_ROOT / "config.yaml"
 
 
@@ -52,8 +52,8 @@ def test_env_file_beside_config_supplies_api_key_and_paths_follow_config(tmp_pat
     assert config.llm.api_key.get_secret_value() == "sk-from-dotenv"
     assert config.pipeline.total_limit == 42
     assert config.paths.raw_catalogue == tmp_path / "data" / "raw.csv"
-    assert config.paths.sorted_catalogue == tmp_path / "udg_database_sorted.csv"
-    assert config.paths.vector_memory == tmp_path / "paper_memory.db"
+    assert config.paths.sorted_catalogue == tmp_path / "data" / "udg_database_sorted.csv"
+    assert config.paths.vector_memory == tmp_path / "data" / "paper_memory.db"
 
 
 def test_embedding_api_key_comes_from_the_environment(tmp_path, monkeypatch):

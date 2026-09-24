@@ -1,2 +1,2 @@
--r requirements-app.txt
+-r requirements/app.txt
 sci-etl-core[async,llm,pdf,cluster,embeddings,embeddings-local,search]>=0.4.0,<0.5

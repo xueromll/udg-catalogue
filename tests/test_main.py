@@ -21,7 +21,8 @@ async def ingestion_must_not_run(*_arguments):
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_text("pipeline:\n  total_limit: 3\n", encoding="utf-8")
-    (tmp_path / "udg_database.csv").write_text(RAW_CATALOGUE, encoding="utf-8")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "udg_database.csv").write_text(RAW_CATALOGUE, encoding="utf-8")
     monkeypatch.setattr(entrypoint, "configure_logging", lambda name, _log_file: logging.getLogger(f"test.{name}"))
     return tmp_path
 
@@ -35,19 +36,19 @@ def test_skip_ingestion_rebuilds_every_output_offline(project, monkeypatch):
 
     assert run_main(project, "--skip-ingestion") == entrypoint.EXIT_OK
 
-    assert (project / "udg_database_sorted.csv").is_file()
-    assert (project / "udg_3d_map.html").is_file()
-    assert sorted(path.name for path in (project / "analysis").iterdir()) == REPORT_NAMES
+    assert (project / "data" / "udg_database_sorted.csv").is_file()
+    assert (project / "output" / "udg_3d_map.html").is_file()
+    assert sorted(path.name for path in (project / "output" / "figures").iterdir()) == REPORT_NAMES
 
 
 def test_missing_raw_catalogue_skips_reports(project, monkeypatch):
     monkeypatch.setattr(entrypoint, "run_ingestion", ingestion_must_not_run)
-    (project / "udg_database.csv").unlink()
+    (project / "data" / "udg_database.csv").unlink()
 
     assert run_main(project, "--skip-ingestion") == entrypoint.EXIT_OK
 
-    assert not (project / "udg_database_sorted.csv").exists()
-    assert not (project / "udg_3d_map.html").exists()
+    assert not (project / "data" / "udg_database_sorted.csv").exists()
+    assert not (project / "output" / "udg_3d_map.html").exists()
 
 
 def test_missing_api_key_stops_before_ingestion(project, monkeypatch):
@@ -55,7 +56,7 @@ def test_missing_api_key_stops_before_ingestion(project, monkeypatch):
 
     assert run_main(project) == entrypoint.EXIT_MISSING_API_KEY
 
-    assert not (project / "udg_database_sorted.csv").exists()
+    assert not (project / "data" / "udg_database_sorted.csv").exists()
 
 
 def test_ingestion_follows_the_config_unless_rescanning(project, monkeypatch):
@@ -73,7 +74,7 @@ def test_ingestion_follows_the_config_unless_rescanning(project, monkeypatch):
     assert run_main(project, "--rescan") == entrypoint.EXIT_OK
 
     assert calls == [(3, None, True), (3, 0, True)]
-    assert (project / "udg_database_sorted.csv").is_file()
+    assert (project / "data" / "udg_database_sorted.csv").is_file()
 
 
 def test_index_papers_indexes_without_ingesting_or_rebuilding(project, monkeypatch):
@@ -90,7 +91,7 @@ def test_index_papers_indexes_without_ingesting_or_rebuilding(project, monkeypat
     assert run_main(project, "--index-papers", "--rescan") == entrypoint.EXIT_OK
 
     assert calls == [0]
-    assert not (project / "udg_database_sorted.csv").exists()
+    assert not (project / "data" / "udg_database_sorted.csv").exists()
 
 
 def test_index_papers_and_skip_ingestion_are_exclusive(project):
@@ -105,7 +106,7 @@ def test_missing_embedding_key_stops_before_ingestion(project, monkeypatch):
 
     assert run_main(project) == entrypoint.EXIT_MISSING_API_KEY
 
-    assert not (project / "udg_database_sorted.csv").exists()
+    assert not (project / "data" / "udg_database_sorted.csv").exists()
 
 
 def test_interrupted_ingestion_stops_without_rebuilding(project, monkeypatch):
@@ -118,7 +119,7 @@ def test_interrupted_ingestion_stops_without_rebuilding(project, monkeypatch):
 
     assert run_main(project) == entrypoint.EXIT_INTERRUPTED
 
-    assert not (project / "udg_database_sorted.csv").exists()
+    assert not (project / "data" / "udg_database_sorted.csv").exists()
 
 
 def test_unavailable_paper_memory_aborts_ingestion_but_rebuilds_outputs(project, monkeypatch):
@@ -131,7 +132,7 @@ def test_unavailable_paper_memory_aborts_ingestion_but_rebuilds_outputs(project,
 
     assert run_main(project) == entrypoint.EXIT_INGESTION_ABORTED
 
-    assert (project / "udg_database_sorted.csv").is_file()
+    assert (project / "data" / "udg_database_sorted.csv").is_file()
 
 
 def test_aborted_ingestion_still_rebuilds_outputs(project, monkeypatch):
@@ -144,4 +145,4 @@ def test_aborted_ingestion_still_rebuilds_outputs(project, monkeypatch):
 
     assert run_main(project) == entrypoint.EXIT_INGESTION_ABORTED
 
-    assert (project / "udg_database_sorted.csv").is_file()
+    assert (project / "data" / "udg_database_sorted.csv").is_file()

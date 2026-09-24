@@ -38,7 +38,7 @@ Open an issue using the bug report template and include:
 - a concise, descriptive title;
 - the steps needed to reproduce the problem;
 - the expected and the observed behaviour;
-- relevant log excerpts from `pipeline.log` or tracebacks, in code blocks;
+- relevant log excerpts from `output/pipeline.log` or tracebacks, in code blocks;
 - your operating system, Python version and commit hash.
 
 Remove API keys from anything you paste.
@@ -72,15 +72,15 @@ git clone https://github.com/<your-username>/udg-catalogue.git
 cd udg-catalogue
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
+pip install -r requirements.txt -r requirements/dev.txt
 pytest --cov
 ```
 
 On Windows, activate the environment with `.venv\Scripts\activate`.
 
-The raw ingestion output `udg_database.csv` is not version-controlled. On a fresh clone, `python main.py --skip-ingestion` therefore has no input to rebuild from. The dashboard (`streamlit run app.py`) does work on a fresh clone, because it reads the released `udg_database_sorted.csv`.
+The raw ingestion output `data/udg_database.csv` is not version-controlled. On a fresh clone, `python main.py --skip-ingestion` therefore has no input to rebuild from. The dashboard (`streamlit run app.py`) does work on a fresh clone, because it reads the released `data/udg_database_sorted.csv`.
 
-To develop sci-etl-core alongside this project, install `requirements-local.txt` instead of `requirements.txt`. It installs a sibling checkout of the library in editable mode.
+To develop sci-etl-core alongside this project, install `requirements/local.txt` instead of `requirements.txt`. It installs a sibling checkout of the library in editable mode.
 
 ## 6. Changes That Affect the Catalogue
 
