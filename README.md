@@ -357,7 +357,7 @@ The map's radial axis is scaled as √distance so that nearby and distant galaxi
 
 ### Related Papers
 
-![Related Papers](assets/paper-search1.png)
+![Related Papers](assets/paper-search.png)
 
 *Discovery graph around a chosen paper. Solid lines link papers with similar content, dashed lines link papers with shared authors and categories, and colours mark communities. The table below lists each paper with its arXiv link.*
 
