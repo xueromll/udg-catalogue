@@ -21,3 +21,12 @@ output/
 apply_docs_fixes.sh
 code.txt
 *.mp4
+/correlation_heatmap.png
+/correlation_report.txt
+/pipeline_meta.json
+/pipeline.log
+/processed_arxiv_ids.txt
+/*.mp4
+/*.html
+/udg_database.csv
+/udg_database.csv.bak
