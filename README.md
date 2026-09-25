@@ -11,7 +11,7 @@
 
 </div>
 
-> **An automated pipeline that screens astrophysics papers on arXiv and extracts measurements of ultra-diffuse galaxies (UDGs) with DeepSeek V4-Flash. It publishes the results as a cross-matched catalogue of 1,285 objects, explorable through an interactive 3D map and a Streamlit dashboard.**
+> **An automated pipeline that screens astrophysics papers on arXiv and extracts measurements of ultra-diffuse galaxies (UDGs) with DeepSeek V4-Flash. It publishes the results as a cross-matched catalogue of 1,927 objects, explorable through an interactive 3D map and a Streamlit dashboard.**
 >
 > Every relevant paper is also kept in a local paper memory, so the dashboard can search the literature by keyword and by meaning, find the papers that mention a catalogued galaxy, and grow a graph of related papers.
 >
@@ -53,26 +53,26 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 
 | Metric | Value |
 |--------|-------|
-| **arXiv submissions screened** | 540+ |
-| **Unique galaxies catalogued** | 1,285 |
-| **Objects with all six parameters (`Confirmed`)** | 66 (5.1%) |
-| **Objects with sky position and distance (3D map)** | 757 |
-| **3D spatial groups (DBSCAN)** | 56 |
-| **IAU constellations represented** | 43 |
+| **arXiv submissions screened** | 557 |
+| **Unique galaxies catalogued** | 1,927 |
+| **Objects with all six parameters (`Confirmed`)** | 90 (4.7%) |
+| **Objects with sky position and distance (3D map)** | 1,048 |
+| **3D spatial groups (DBSCAN)** | 78 |
+| **IAU constellations represented** | 44 |
 | **Median record completeness** | 66.7% |
-| **Literature snapshot** | 2026-08-05 |
-| **Total API cost (four full runs)** | US$2.61 |
+| **Literature snapshot** | 2026-09-24 |
+| **Total API cost (five full runs)** | US$4.32 |
 | **ETL framework** | sci-etl-core 0.4 |
 
 ### Parameter coverage
 
 | Parameter | Column | Unit | Objects | Coverage | Median |
 |---|---|---|---:|---:|---:|
-| Right ascension, declination (ICRS) | `ra`, `dec` | deg | 1,004 | 78.1% | — |
-| Distance | `distance_mpc` | Mpc | 958 | 74.6% | 40.2 |
-| Effective radius | `effective_radius_kpc` | kpc | 997 | 77.6% | 1.74 |
-| Stellar mass | `stellar_mass_solar` | M☉ | 681 | 53.0% | 6.3 × 10⁷ |
-| Dark-matter fraction | `dark_matter_fraction` | — | 70 | 5.4% | 0.89 |
+| Right ascension, declination (ICRS) | `ra`, `dec` | deg | 1,469 | 76.2% | — |
+| Distance | `distance_mpc` | Mpc | 1,345 | 69.8% | 53.0 |
+| Effective radius | `effective_radius_kpc` | kpc | 1,526 | 79.2% | 1.86 |
+| Stellar mass | `stellar_mass_solar` | M☉ | 915 | 47.5% | 6.4 × 10⁷ |
+| Dark-matter fraction | `dark_matter_fraction` | — | 97 | 5.0% | 0.89 |
 
 ---
 
@@ -278,7 +278,7 @@ The default `local` embeddings provider downloads the `all-MiniLM-L6-v2` model (
 
 ### Rebuilding the Catalogue From Scratch
 
-The committed catalogue was extracted before the migration to sci-etl-core. At that time, name matching could merge distinct galaxies that shared a catalogue number, such as `KDG 44` and `DF 44`, or `NGC 1052-DF2` and `NGC 1052-DF4`. The current code keeps such galaxies apart, but it cannot split rows that were merged earlier. To rebuild with the current rules, archive the raw data and state, then run the pipeline:
+The committed catalogue was rebuilt from scratch on 2026-09-24 with sci-etl-core 0.4. Catalogues extracted before the migration could merge distinct galaxies that shared a catalogue number, such as `KDG 44` and `DF 44`, or `NGC 1052-DF2` and `NGC 1052-DF4`. The rebuilt catalogue keeps them apart. The pipeline never splits rows it has already merged, so rebuild again whenever the name-matching rules or the extraction prompt change. To rebuild, archive the raw data and state, then run the pipeline:
 
 ```bash
 mkdir -p archive
@@ -286,7 +286,7 @@ mv data/udg_database.csv data/processed_arxiv_ids.txt data/pipeline_meta.json ar
 python main.py --rescan
 ```
 
-A rebuild reprocesses every matching paper, so expect roughly the API cost of one full run (about US$0.65). Answers already in `data/llm_cache.db` cost nothing, so move it to `archive/` as well to get fresh answers from the model.
+A rebuild reprocesses every matching paper. The 2026-09-24 rebuild screened 557 submissions, read 312 relevant papers in full, and cost ¥11.51 (about US$1.71). Answers already in `data/llm_cache.db` cost nothing, so move it to `archive/` as well to get fresh answers from the model.
 
 ### Docker (Recommended)
 
@@ -315,7 +315,7 @@ The second command should print a path inside your sci-etl-core checkout. An edi
 
 ## Dashboard Features
 
-* **3D Interactive Map.** Explore the 757 galaxies that have a sky position and distance, colour-coded by:
+* **3D Interactive Map.** Explore the 1,048 galaxies that have a sky position and distance, colour-coded by:
   * Dark Matter Fraction
   * Completeness (%)
   * Distance (Mpc)
@@ -349,6 +349,18 @@ The map's radial axis is scaled as √distance so that nearby and distant galaxi
 
 *Statistical plots: stellar mass distribution, effective radius distribution and the mass–radius relation coloured by completeness.*
 
+### Paper Search
+
+![Paper Search](assets/paper-search2.png)
+
+*Search the indexed papers by keyword, by meaning, or both, filtered by arXiv category and publication year, or pick a galaxy to find the papers that mention it.*
+
+### Related Papers
+
+![Related Papers](assets/paper-search1.png)
+
+*Discovery graph around a chosen paper. Solid lines link papers with similar content, dashed lines link papers with shared authors and categories, and colours mark communities. The table below lists each paper with its arXiv link.*
+
 ---
 
 ## Testing
@@ -364,7 +376,7 @@ Coverage of `udg_catalogue` and `main.py` must stay at 100%. `pyproject.toml` en
 
 Beyond unit tests:
 
-- **End-to-end runs.** The pipeline was run four times from a cleared state. The runs checked robustness to missing or malformed PDFs, JSON schema parsing with percentage conversion, and the deduplication and clustering steps.
+- **End-to-end runs.** The pipeline was run five times from a cleared state. The runs checked robustness to missing or malformed PDFs, JSON schema parsing with percentage conversion, and the deduplication and clustering steps.
 - **Verified migration.** The move to sci-etl-core was checked by replaying the catalogue through the old and new code. The CSV upserts matched exactly. The sorted catalogue matched cell for cell, except for three rows with an invalid right ascension. The walkthrough is the case study in sci-etl-core's [MIGRATION.md](https://github.com/xueromll/sci-etl-core/blob/master/MIGRATION.md).
 
 ---
