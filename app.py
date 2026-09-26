@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TypeVar
 
 import pandas as pd
 import streamlit as st
 from sci_etl_core import SearchQueryError, configure_logging
 from sci_etl_core.discovery import DiscoveryResult
 from sci_etl_core.embeddings import AsyncEmbedder
-from sci_etl_core.search import DiscoveryGraph
+from sci_etl_core.search import DiscoveryGraph, filter_graph
 
 from udg_catalogue.analytics import effective_radius_histogram, mass_radius_scatter, stellar_mass_histogram
 from udg_catalogue.config import (
@@ -21,10 +23,12 @@ from udg_catalogue.config import (
 )
 from udg_catalogue.literature import (
     LibraryOverview,
+    PaperLibrary,
+    PaperLibraryService,
     build_embedder,
     galaxy_query,
+    open_paper_library,
     paper_filters,
-    with_paper_library,
 )
 from udg_catalogue.maps import build_3d_figure, cluster_label, prepare_map_frame
 from udg_catalogue.paper_views import (
@@ -53,6 +57,7 @@ QUERY_HELP = (
     "and NEAR(a b, 5)."
 )
 PAGE_SIZES = [10, 50, 100]
+T = TypeVar("T")
 COLOR_OPTIONS = {
     "Dark Matter Fraction": "dark_matter_fraction",
     "Completeness (%)": "completeness_pct",
@@ -101,9 +106,20 @@ def shared_embedder(config: CatalogueConfig) -> AsyncEmbedder | None:
     return None
 
 
+@st.cache_resource(show_spinner="Opening the paper library...")
+def paper_service(_config: CatalogueConfig, settings: str) -> PaperLibraryService:
+    return PaperLibraryService(lambda: open_paper_library(_config, shared_embedder(_config)))
+
+
+def on_library(
+    config: CatalogueConfig, version: tuple[str, float], operation: Callable[[PaperLibrary], Awaitable[T]]
+) -> T:
+    return paper_service(config, config.model_dump_json()).run(operation, version)
+
+
 @st.cache_data
 def paper_overview(_config: CatalogueConfig, version: tuple[str, float]) -> LibraryOverview:
-    return with_paper_library(_config, lambda library: library.overview(), shared_embedder(_config))
+    return on_library(_config, version, lambda library: library.overview())
 
 
 @st.cache_data(show_spinner="Searching papers...")
@@ -116,27 +132,23 @@ def search_papers(
     years: tuple[int, int] | None,
 ) -> DiscoveryResult:
     filters = paper_filters(categories, years)
-    return with_paper_library(
+    return on_library(
         _config,
+        version,
         lambda library: library.search(query, mode=mode, filters=filters, top_k=SEARCH_RESULTS),
-        shared_embedder(_config),
     )
 
 
 @st.cache_data(show_spinner="Growing the discovery graph...")
-def related_papers(
-    _config: CatalogueConfig,
-    version: tuple[str, float],
-    record_id: str,
-    categories: tuple[str, ...],
-    years: tuple[int, int] | None,
+def related_papers(_config: CatalogueConfig, version: tuple[str, float], record_id: str) -> DiscoveryGraph:
+    return on_library(_config, version, lambda library: library.related_papers(record_id))
+
+
+def filtered_graph(
+    graph: DiscoveryGraph, categories: tuple[str, ...], years: tuple[int, int] | None
 ) -> DiscoveryGraph:
     filters = paper_filters(categories, years)
-    return with_paper_library(
-        _config,
-        lambda library: library.related_papers(record_id, filters),
-        shared_embedder(_config),
-    )
+    return filter_graph(graph, filters=filters) if filters else graph
 
 
 def current_catalogue(config: CatalogueConfig) -> pd.DataFrame:
@@ -350,7 +362,7 @@ def render_papers(config: CatalogueConfig, galaxies: pd.DataFrame) -> None:
         render_hits(result, mode)
     seed = st.session_state.get(SEED_KEY)
     if seed:
-        render_graph(related_papers(config, version, seed, categories, years))
+        render_graph(filtered_graph(related_papers(config, version, seed), categories, years))
 
 
 def main() -> None:

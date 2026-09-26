@@ -5,6 +5,7 @@ from fakes import HashingEmbedder
 from sci_etl_core import AsyncCompositeIngestor, RawRecord, SearchQueryError
 from sci_etl_core.embeddings import AsyncOpenAIEmbedder, InMemoryEmbeddingStore
 from sci_etl_core.search import (
+    AsyncEdgeSource,
     AsyncSearchIndexer,
     AsyncSqliteFts5Store,
     EmbeddingEdgeSource,
@@ -17,14 +18,15 @@ from sci_etl_core.search import (
 from udg_catalogue import literature as literature_module
 from udg_catalogue.config import PAPER_FACET_KEYS, EmbeddingsConfig
 from udg_catalogue.literature import (
+    CachedEdgeSource,
     LibraryOverview,
     PaperLibrary,
+    PaperLibraryService,
     build_chunker,
     build_embedder,
     galaxy_query,
     open_paper_library,
     paper_filters,
-    with_paper_library,
 )
 
 SHARED_AUTHORS = ["Pieter van Dokkum", "Shany Danieli", "Roberto Abraham"]
@@ -65,6 +67,19 @@ class RecordingStore:
 
     async def aclose(self):
         self.closed = True
+
+
+class CountingEdgeSource(AsyncEdgeSource):
+    def __init__(self):
+        self.requests = []
+
+    @property
+    def kind(self):
+        return "counting"
+
+    async def neighbours(self, record_ids, limit):
+        self.requests.append(list(record_ids))
+        return {record_id: [(f"{record_id}-next", 0.5)] for record_id in record_ids}
 
 
 def build_library(semantic=True, **options):
@@ -137,7 +152,7 @@ def test_lexical_library_only_indexes_text():
     assert not library.semantic
     assert library.usage_sources == []
     assert isinstance(library.memory_ingestor(build_chunker(EmbeddingsConfig()), print), AsyncSearchIndexer)
-    assert [type(source) for source in library.edge_sources()] == [MetadataEdgeSource]
+    assert [type(source.source) for source in library.edge_sources()] == [MetadataEdgeSource]
 
 
 def test_hybrid_search_returns_hits_facets_and_match_counts():
@@ -195,7 +210,7 @@ def test_overview_lists_papers_years_and_categories():
 def test_related_papers_links_shared_authors_and_similar_text():
     library = filled(build_library())
 
-    assert [type(source) for source in library.edge_sources()] == [EmbeddingEdgeSource, MetadataEdgeSource]
+    assert [type(source.source) for source in library.edge_sources()] == [EmbeddingEdgeSource, MetadataEdgeSource]
     graph = asyncio.run(library.related_papers("2601.00001"))
 
     assert graph.seed_record_id == "2601.00001"
@@ -256,14 +271,57 @@ def test_open_paper_library_without_embeddings_opens_only_the_text_index(catalog
     asyncio.run(library.aclose())
 
 
-def test_with_paper_library_runs_the_operation_and_closes(catalogue_config):
+def test_cached_edge_source_fetches_each_record_once_until_cleared():
+    source = CountingEdgeSource()
+    cached = CachedEdgeSource(source)
+
+    first = asyncio.run(cached.neighbours(["a", "b", "a"], 3))
+    second = asyncio.run(cached.neighbours(["b", "c"], 3))
+
+    assert cached.kind == "counting"
+    assert first == {"a": [("a-next", 0.5)], "b": [("b-next", 0.5)]}
+    assert second == {"b": [("b-next", 0.5)], "c": [("c-next", 0.5)]}
+    assert source.requests == [["a", "b"], ["c"]]
+    asyncio.run(cached.neighbours(["a"], 5))
+    cached.clear()
+    asyncio.run(cached.neighbours(["a"], 3))
+    assert source.requests == [["a", "b"], ["c"], ["a"], ["a"]]
+
+
+def test_related_papers_reuses_neighbour_lists_across_builds():
+    library = filled(build_library(semantic=False))
+    [cached] = library.edge_sources()
+
+    asyncio.run(library.related_papers("2601.00001"))
+    remembered = len(cached)
+    asyncio.run(library.related_papers("2601.00002"))
+
+    assert library.edge_sources() == [cached]
+    assert len(cached) == remembered > 0
+    library.forget_neighbours()
+    assert len(cached) == 0
+
+
+def test_paper_library_service_keeps_one_library_open_between_calls(catalogue_config):
     shared = HashingEmbedder()
 
     async def index_and_search(library):
         await ingest_papers(library)
         return await library.search("dwarf", mode="lexical")
 
-    result = with_paper_library(catalogue_config, index_and_search, shared)
+    service = PaperLibraryService(lambda: open_paper_library(catalogue_config, shared))
+    try:
+        library = service.library
+        result = service.run(index_and_search, ("index", 1.0))
+        service.run(lambda library: library.related_papers("2601.00001"), ("index", 1.0))
 
-    assert [hit.record_id for hit in result.hits] == ["2601.00003"]
-    assert with_paper_library(catalogue_config, lambda library: library.count(), shared) == 3
+        assert [hit.record_id for hit in result.hits] == ["2601.00003"]
+        assert service.run(lambda library: library.count(), ("index", 1.0)) == 3
+        assert service.library is library
+        assert all(len(source) for source in library.edge_sources())
+        service.run(lambda library: library.count(), ("index", 2.0))
+        assert not any(len(source) for source in library.edge_sources())
+    finally:
+        service.close()
+    service.close()
+    assert not shared.closed

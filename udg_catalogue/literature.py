@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
-from collections.abc import Awaitable, Callable, Collection, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Hashable, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -29,6 +30,7 @@ from sci_etl_core.search import (
     EmbeddingEdgeSource,
     MetadataEdgeSource,
     MetadataFilter,
+    Node,
     RangeFilter,
     SearchDocument,
     SearchFilter,
@@ -73,6 +75,35 @@ def paper_filters(
     return filters
 
 
+class CachedEdgeSource(AsyncEdgeSource):
+    def __init__(self, source: AsyncEdgeSource) -> None:
+        self._source = source
+        self._lists: dict[tuple[str, int], list[tuple[str, float]]] = {}
+
+    @property
+    def source(self) -> AsyncEdgeSource:
+        return self._source
+
+    @property
+    def kind(self) -> str:
+        return self._source.kind
+
+    async def neighbours(self, record_ids: Sequence[str], limit: int) -> dict[str, list[tuple[str, float]]]:
+        wanted = list(dict.fromkeys(record_ids))
+        missing = [record_id for record_id in wanted if (record_id, limit) not in self._lists]
+        if missing:
+            fetched = await self._source.neighbours(missing, limit)
+            for record_id in missing:
+                self._lists[(record_id, limit)] = list(fetched.get(record_id, []))
+        return {record_id: list(self._lists[(record_id, limit)]) for record_id in wanted}
+
+    def clear(self) -> None:
+        self._lists.clear()
+
+    def __len__(self) -> int:
+        return len(self._lists)
+
+
 @dataclass(frozen=True, slots=True)
 class LibraryOverview:
     papers: int
@@ -96,6 +127,7 @@ class PaperLibrary:
         self._embedder = embedder
         self._vector_store = vector_store
         self._closeables = list(closeables)
+        self._edge_sources: list[CachedEdgeSource] | None = None
 
     @property
     def text_store(self) -> AsyncTextSearchStore:
@@ -158,39 +190,47 @@ class PaperLibrary:
         started = time.perf_counter()
         node = parse_query(query)
         lexical_node = None if mode == "semantic" else node
-        outcome, facet_counts = await asyncio.gather(
+        outcome, facet_counts, matched_ids = await asyncio.gather(
             self.searcher(logger).search(query, top_k, mode=mode, filters=filters),
             self._text_store.facet_counts(DISPLAY_FACET_KEYS, query=lexical_node, filters=filters),
+            self._matched_ids(lexical_node, filters),
         )
-        if lexical_node is None:
-            total_matched = len(outcome.hits)
-        else:
-            total_matched = len(await self._text_store.filter_ids(lexical_node, filters))
         return DiscoveryResult(
             query_text=query,
             chips=tuple(describe(node)),
             hits=tuple(outcome.hits),
             graph=None,
             facets=tuple(Facet(key, facet_counts[key]) for key in DISPLAY_FACET_KEYS),
-            total_matched=total_matched,
+            total_matched=len(outcome.hits) if matched_ids is None else len(matched_ids),
             elapsed_ms=(time.perf_counter() - started) * 1000,
             degraded=outcome.degraded,
             skipped=outcome.skipped,
         )
 
-    def edge_sources(self) -> list[AsyncEdgeSource]:
-        sources: list[AsyncEdgeSource] = []
-        if self._embedder is not None and self._vector_store is not None:
-            sources.append(
-                EmbeddingEdgeSource(
-                    self._embedder,
-                    self._vector_store,
-                    self._text_store,
-                    chunk_pool_factor=self._search_config.hybrid.chunk_pool_factor,
+    async def _matched_ids(self, node: Node | None, filters: Sequence[SearchFilter]) -> frozenset[str] | None:
+        if node is None:
+            return None
+        return await self._text_store.filter_ids(node, filters)
+
+    def edge_sources(self) -> list[CachedEdgeSource]:
+        if self._edge_sources is None:
+            sources: list[AsyncEdgeSource] = []
+            if self._embedder is not None and self._vector_store is not None:
+                sources.append(
+                    EmbeddingEdgeSource(
+                        self._embedder,
+                        self._vector_store,
+                        self._text_store,
+                        chunk_pool_factor=self._search_config.hybrid.chunk_pool_factor,
+                    )
                 )
-            )
-        sources.append(MetadataEdgeSource(self._text_store, keys=GRAPH_TAG_KEYS))
-        return sources
+            sources.append(MetadataEdgeSource(self._text_store, keys=GRAPH_TAG_KEYS))
+            self._edge_sources = [CachedEdgeSource(source) for source in sources]
+        return list(self._edge_sources)
+
+    def forget_neighbours(self) -> None:
+        for source in self._edge_sources or ():
+            source.clear()
 
     async def related_papers(self, record_id: str, filters: Sequence[SearchFilter] = ()) -> DiscoveryGraph:
         graph = await build_discovery_graph(
@@ -225,16 +265,40 @@ def open_paper_library(config: CatalogueConfig, embedder: AsyncEmbedder | None =
     return PaperLibrary(text_store, config.search, embedder, vector_store, closeables)
 
 
-def with_paper_library(
-    config: CatalogueConfig,
-    operation: Callable[[PaperLibrary], Awaitable[T]],
-    embedder: AsyncEmbedder | None = None,
-) -> T:
-    async def run() -> T:
-        library = open_paper_library(config, embedder)
-        try:
-            return await operation(library)
-        finally:
-            await library.aclose()
+class PaperLibraryService:
+    def __init__(self, open_library: Callable[[], PaperLibrary]) -> None:
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._loop.run_forever, name="paper-library", daemon=True)
+        self._thread.start()
+        self._library = self._submit(self._open(open_library))
+        self._version: Hashable = None
 
-    return asyncio.run(run())
+    @property
+    def library(self) -> PaperLibrary:
+        return self._library
+
+    def run(self, operation: Callable[[PaperLibrary], Awaitable[T]], version: Hashable = None) -> T:
+        return self._submit(self._run(operation, version))
+
+    def close(self) -> None:
+        if self._loop.is_closed():
+            return
+        try:
+            self._submit(self._library.aclose())
+        finally:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join()
+            self._loop.close()
+
+    def _submit(self, coroutine: Coroutine[Any, Any, T]) -> T:
+        return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result()
+
+    async def _run(self, operation: Callable[[PaperLibrary], Awaitable[T]], version: Hashable) -> T:
+        if version != self._version:
+            self._library.forget_neighbours()
+            self._version = version
+        return await operation(self._library)
+
+    @staticmethod
+    async def _open(open_library: Callable[[], PaperLibrary]) -> PaperLibrary:
+        return open_library()
