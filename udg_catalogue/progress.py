@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
 from sci_etl_core.extractors.async_base import AsyncExtractor
 from sci_etl_core.llm.relevance_async import AsyncRelevanceFilter
-from sci_etl_core.models import RawRecord
+from sci_etl_core.models import ListingPage, RawRecord
 from sci_etl_core.observability import (
     PageFetched,
     PageFinished,
@@ -18,6 +19,9 @@ from sci_etl_core.observability import (
     RunStarted,
 )
 from sci_etl_core.parsers.base import Parser
+
+if TYPE_CHECKING:
+    from sci_etl_core import AsyncArxivExtractor
 
 Log = Callable[[str], None]
 TITLE_WIDTH = 80
@@ -55,16 +59,22 @@ class LoggingRelevanceFilter(AsyncRelevanceFilter):
 
 
 class LoggingExtractor(AsyncExtractor):
-    def __init__(self, inner: AsyncExtractor, logger: Log) -> None:
+    """Log each listing request and full-text download of an arXiv extractor.
+
+    ``inner`` pages by offset, so this extractor does too, and ``newest_first``
+    runs keep working through it.
+    """
+
+    def __init__(self, inner: AsyncArxivExtractor, logger: Log) -> None:
         self._inner = inner
         self._log = logger
 
-    async def search(self, query: str, max_results: int, start_index: int) -> bytes | None:
-        self._log(f"Fetching arXiv listing: offset {start_index}, up to {max_results} entries")
-        return await self._inner.search(query, max_results, start_index)
+    def cursor_for_offset(self, offset: int) -> str:
+        return self._inner.cursor_for_offset(offset)
 
-    def parse_listing(self, raw_listing: bytes, seen_ids: set[str]) -> tuple[list[RawRecord], int]:
-        return self._inner.parse_listing(raw_listing, seen_ids)
+    async def fetch_page(self, query: str, cursor: str | None, page_size: int) -> ListingPage:
+        self._log(f"Fetching arXiv listing: offset {cursor or 0}, up to {page_size} entries")
+        return await self._inner.fetch_page(query, cursor, page_size)
 
     async def fetch_full_text(self, record: RawRecord) -> str:
         self._log(paper_message("Relevant; downloading full text (LaTeX source, then PDF)"))

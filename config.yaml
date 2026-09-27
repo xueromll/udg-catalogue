@@ -9,6 +9,9 @@ http:
   backoff_factor: 5.0
   timeout: 25
 
+full_text:
+  max_concurrency: 4
+
 pipeline:
   search_query: "cat:astro-ph.GA AND abs:ultra-diffuse"
   total_limit: 500
@@ -31,6 +34,8 @@ paths:
   llm_cache: "data/llm_cache.db"
   indexed_ids: "data/indexed_arxiv_ids.txt"
   indexing_metadata: "data/indexing_meta.json"
+  rejections: "data/rejected_galaxies.db"
+  run_manifest: "data/run_manifest.json"
 
 embeddings:
   enabled: true

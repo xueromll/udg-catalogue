@@ -8,7 +8,8 @@ import pandas as pd
 import pytest
 from fakes import HashingEmbedder
 from pydantic import SecretStr
-from sci_etl_core import AsyncLLMClient, PipelineInterrupted, ShutdownSignal
+from sci_etl_core import AsyncArxivExtractor, AsyncLLMClient, PipelineInterrupted, ShutdownSignal
+from sci_etl_core.claims import AsyncSqliteRejectionStore
 from sci_etl_core.config import PipelineConfig
 from sci_etl_core.embeddings import AsyncSqliteEmbeddingStore
 from sci_etl_core.search import AsyncSqliteFts5Store
@@ -56,7 +57,7 @@ EXTRACTED_GALAXIES = [
         "distance_mpc": 100.0,
         "effective_radius_kpc": 4.6,
         "stellar_mass_solar": 3e8,
-        "dark_matter_fraction": 99.0,
+        "dark_matter_fraction": 0.99,
     },
     {"galaxy_name": "mock_udg_1", "ra": 10.0, "dec": 10.0},
 ]
@@ -138,6 +139,14 @@ def stored_chunks(config):
     return asyncio.run(count())
 
 
+async def unresolved_rejections(config):
+    store = AsyncSqliteRejectionStore(config.paths.rejections)
+    try:
+        return await store.unresolved()
+    finally:
+        await store.aclose()
+
+
 def extraction_calls(llm):
     return [content for prompt, content in llm.calls if prompt == EXTRACTION_PROMPT]
 
@@ -148,31 +157,26 @@ def test_ingestion_exports_galaxies_and_remembers_each_relevant_paper(ingestion_
     embedder = HashingEmbedder()
     created = install_fakes(monkeypatch, arxiv, llm, embedder)
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    caplog.set_level(logging.INFO, logger="sci_etl_core")
 
     processed = asyncio.run(run_ingestion(ingestion_config, logging.getLogger(LOGGER_NAME)))
 
     assert processed == 1
-    assert pd.read_csv(ingestion_config.paths.raw_catalogue).to_dict("records") == [
-        {
-            "galaxy_name": "Dragonfly 44",
-            "ra": 195.24,
-            "dec": 26.98,
-            "distance_mpc": 100.0,
-            "effective_radius_kpc": 4.6,
-            "stellar_mass_solar": 3e8,
-            "dark_matter_fraction": 1.0,
-        }
-    ]
-    assert any(
-        message.endswith("Rejected galaxy 'mock_udg_1': name matches simulation keyword 'mock'")
-        for message in caplog.messages
-    )
+    raw = pd.read_csv(ingestion_config.paths.raw_catalogue, dtype={"record_id": str})
+    assert raw.columns.tolist() == ["record_id", *EXTRACTED_GALAXIES[0], "extra"]
+    assert raw["extra"].isna().all()
+    assert raw.drop(columns="extra").to_dict("records") == [{"record_id": OBSERVATIONAL_ID, **EXTRACTED_GALAXIES[0]}]
+    assert "Entity rejected by validation: 'mock_udg_1' (name matches simulation keyword 'mock')" in caplog.messages
+    (rejected,) = asyncio.run(unresolved_rejections(ingestion_config))
+    assert (rejected.record_id, rejected.entity) == (OBSERVATIONAL_ID, EXTRACTED_GALAXIES[1])
+    assert [violation.code for violation in rejected.violations] == ["simulation-keyword"]
+    assert rejected.stamp.model == ingestion_config.llm.model
     assert set(ingestion_config.paths.processed_ids.read_text(encoding="utf-8").split()) == {
         OBSERVATIONAL_ID,
         SIMULATED_ID,
     }
     metadata = json.loads(ingestion_config.paths.pipeline_metadata.read_text(encoding="utf-8"))
-    assert metadata["last_start_index"] == 2
+    assert metadata["cursor"] == "2"
     assert [request["start"] for request in arxiv.listing_requests] == ["0", "2"]
     assert arxiv.listing_requests[0]["search_query"] == ingestion_config.pipeline.search_query
     assert arxiv.listing_requests[0]["max_results"] == "2"
@@ -208,6 +212,22 @@ def test_clients_are_built_from_the_config_sections(catalogue_config):
     assert llm_client.model == config.llm.model
     asyncio.run(http_client.aclose())
     asyncio.run(llm_client.aclose())
+
+
+def test_arxiv_requests_share_the_full_text_rate_limit(ingestion_config, monkeypatch):
+    sections = []
+    build_extractor = AsyncArxivExtractor.from_config.__func__
+
+    def recording(cls, *args, **kwargs):
+        sections.append(kwargs["full_text"])
+        return build_extractor(cls, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncArxivExtractor, "from_config", classmethod(recording))
+    install_fakes(monkeypatch, FakeArxiv(), ScriptedLLMClient())
+
+    asyncio.run(run_ingestion(ingestion_config, logging.getLogger(LOGGER_NAME)))
+
+    assert sections == [ingestion_config.full_text]
 
 
 def test_saved_offset_is_used_when_newest_first_is_off(ingestion_config, monkeypatch):

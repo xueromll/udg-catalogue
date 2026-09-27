@@ -13,6 +13,7 @@ __pycache__/
 # Pipeline data: only the released catalogue is committed
 data/*
 !data/udg_database_sorted.csv
+!data/run_manifest.json
 
 # Generated reports, maps and logs
 output/
@@ -30,3 +31,5 @@ code.txt
 /*.html
 /udg_database.csv
 /udg_database.csv.bak
+
+.patches/

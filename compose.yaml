@@ -1,12 +1,27 @@
 services:
-  udg-pipeline:
+  dashboard:
     build: .
-    container_name: udg_research_app
+    container_name: udg_dashboard
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
+    environment:
+      - UDG_DASHBOARD_READ_ONLY=1
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+    volumes:
+      - ./data:/app/data
+      - ./.cache:/app/.cache
+      - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
+
+  pipeline:
+    build: .
+    profiles: ["pipeline"]
+    command: ["python", "main.py"]
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
     volumes:
-      - .:/app
-    restart: unless-stopped
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./.cache:/app/.cache
+      - ./config.yaml:/app/config.yaml:ro

@@ -7,9 +7,9 @@ import main as entrypoint
 from udg_catalogue.config import API_KEY_ENV_VAR
 
 RAW_CATALOGUE = (
-    "galaxy_name,ra,dec,distance_mpc,effective_radius_kpc,stellar_mass_solar,dark_matter_fraction\n"
-    "Alpha,83.633,-5.361,5.0,2.0,1e8,0.9\n"
-    "Beta,10.0,20.0,15.0,1.5,3e8,\n"
+    "galaxy_name,ra,dec,distance_mpc,effective_radius_kpc,stellar_mass_solar,dark_matter_fraction,record_id\n"
+    "Alpha,83.633,-5.361,5.0,2.0,1e8,0.9,2401.00001\n"
+    "Beta,10.0,20.0,15.0,1.5,3e8,,2401.00002\n"
 )
 REPORT_NAMES = ["mass_vs_radius.png", "radius_dist.png", "stellar_mass_dist.png"]
 
@@ -23,7 +23,7 @@ def project(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_text("pipeline:\n  total_limit: 3\n", encoding="utf-8")
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "udg_database.csv").write_text(RAW_CATALOGUE, encoding="utf-8")
-    monkeypatch.setattr(entrypoint, "configure_logging", lambda name, _log_file: logging.getLogger(f"test.{name}"))
+    monkeypatch.setattr(entrypoint, "configure_run_logging", lambda _log_file: logging.getLogger("test.UDGPipeline"))
     return tmp_path
 
 
@@ -39,6 +39,25 @@ def test_skip_ingestion_rebuilds_every_output_offline(project, monkeypatch):
     assert (project / "data" / "udg_database_sorted.csv").is_file()
     assert (project / "output" / "udg_3d_map.html").is_file()
     assert sorted(path.name for path in (project / "output" / "figures").iterdir()) == REPORT_NAMES
+
+
+def test_replace_catalogue_writes_a_catalogue_smaller_than_the_published_one(project, monkeypatch):
+    monkeypatch.setattr(entrypoint, "run_ingestion", ingestion_must_not_run)
+    published = project / "data" / "udg_database_sorted.csv"
+    header = (
+        RAW_CATALOGUE.splitlines()[0]
+        .removesuffix(",record_id")
+        .replace("galaxy_name,", "galaxy_name,completeness_pct,quality_flag,")
+    )
+    names = ["One", "Two", "Three"]
+    rows = [f"{name},100.0,Confirmed,{index}.0,1.0,5.0,2.0,1e8,0.9" for index, name in enumerate(names)]
+    published.write_text("\n".join([header, *rows]) + "\n", encoding="utf-8")
+
+    assert run_main(project, "--skip-ingestion") == entrypoint.EXIT_OK
+    assert len(published.read_text(encoding="utf-8").splitlines()) == 4
+
+    assert run_main(project, "--skip-ingestion", "--replace-catalogue") == entrypoint.EXIT_OK
+    assert len(published.read_text(encoding="utf-8").splitlines()) == 3
 
 
 def test_missing_raw_catalogue_skips_reports(project, monkeypatch):

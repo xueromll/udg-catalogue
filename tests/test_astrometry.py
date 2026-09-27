@@ -37,6 +37,25 @@ def test_sky_position_matcher_pairs_close_neighbours_once():
     assert SkyPositionMatcher().find_matches(frame, threshold=3.0) == [(0, 1)]
 
 
+def test_sky_position_matcher_pairs_rows_at_identical_coordinates():
+    frame = pd.DataFrame({"ra": [15.0, 15.0, 35.0], "dec": [30.0, 30.0, -10.0]})
+
+    assert SkyPositionMatcher().find_matches(frame, threshold=3.0) == [(0, 1)]
+
+
+def test_sky_position_matcher_groups_every_row_of_a_triplet():
+    frame = pd.DataFrame({"ra": [15.0, 15.0003, 15.0, 80.0], "dec": [30.0, 30.0, 30.0005, 5.0]})
+
+    assert SkyPositionMatcher().find_matches(frame, threshold=3.0) == [(0, 1), (0, 2)]
+
+
+def test_sky_position_matcher_joins_a_chain_of_close_rows_into_one_group():
+    step = 2.5 / 3600
+    frame = pd.DataFrame({"ra": [15.0, 15.0 + step, 15.0 + 2 * step], "dec": [0.0, 0.0, 0.0]}, index=[7, 3, 5])
+
+    assert SkyPositionMatcher().find_matches(frame, threshold=3.0) == [(3, 5), (3, 7)]
+
+
 def test_sky_position_matcher_ignores_pairs_beyond_threshold():
     frame = pd.DataFrame({"ra": [10.0, 10.005], "dec": [20.0, 20.005]})
 

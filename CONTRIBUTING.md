@@ -55,9 +55,11 @@ The generic ETL machinery lives in [sci-etl-core](https://github.com/xueromll/sc
 |---|---|
 | `udg_catalogue/prompts.py` | Relevance and extraction prompts |
 | `udg_catalogue/naming.py` | `KeyNormalizer` deciding when two designations refer to the same object |
-| `udg_catalogue/validation.py` | `RecordValidator` rules applied to every extracted galaxy |
+| `udg_catalogue/validation.py` | `RecordValidator` rules applied to every extracted galaxy, each rejection with a rule code |
 | `udg_catalogue/astrometry.py` | `NeighborMatcher`, `FeatureExtractor` and `Processor` implementations built on astropy |
 | `udg_catalogue/postprocess.py` | `ProcessorChain` producing the sorted catalogue |
+| `udg_catalogue/manifest.py` | Run manifest recording what produced the published catalogue |
+| `udg_catalogue/logs.py` | Run log shared by the catalogue and sci-etl-core, with paper ids on core lines |
 | `udg_catalogue/pipeline.py` | Assembly of the sci-etl-core ingestion and paper-indexing pipelines |
 | `udg_catalogue/literature.py` | Paper memory built from sci-etl-core's search index, embeddings and discovery graphs |
 | `udg_catalogue/paper_views.py` | Snippet highlighting and graph layout for the dashboard's paper search |

@@ -94,6 +94,17 @@ def test_dashboard_renders_every_view_of_the_committed_catalogue():
     assert app.subheader[-1].value == "Statistical Analytics"
 
 
+@pytest.mark.parametrize(("read_only", "offered"), [(None, True), ("1", False)])
+def test_refresh_data_is_offered_unless_the_dashboard_is_read_only(monkeypatch, read_only, offered):
+    if read_only is None:
+        monkeypatch.delenv("UDG_DASHBOARD_READ_ONLY", raising=False)
+    else:
+        monkeypatch.setenv("UDG_DASHBOARD_READ_ONLY", read_only)
+    app = AppTest.from_file(str(APP_PATH), default_timeout=120).run()
+
+    assert any(button.label == "Refresh Data" for button in app.button) is offered
+
+
 def test_paper_search_explains_how_to_build_a_missing_index(paper_project):
     app = open_paper_search(AppTest.from_file(str(APP_PATH), default_timeout=120))
 

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from sci_etl_core.config import BaseAppConfig, load_config
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -21,11 +21,24 @@ MEASUREMENT_FIELDS: tuple[str, ...] = (
     "stellar_mass_solar",
     "dark_matter_fraction",
 )
-FRACTION_BOUNDS: dict[str, tuple[float, float]] = {"dark_matter_fraction": (0.0, 1.0)}
+POSITION_FIELDS: tuple[str, ...] = ("ra", "dec")
+PHYSICAL_FIELDS: tuple[str, ...] = tuple(field for field in MEASUREMENT_FIELDS if field not in POSITION_FIELDS)
+MEASUREMENT_RANGES: dict[str, tuple[float, float]] = {
+    "ra": (0.0, 360.0),
+    "dec": (-90.0, 90.0),
+    "distance_mpc": (0.0, 1e4),
+    "effective_radius_kpc": (0.0, 100.0),
+    "stellar_mass_solar": (0.0, 1e12),
+    "dark_matter_fraction": (0.0, 1.0),
+}
+STRICTLY_POSITIVE_FIELDS: frozenset[str] = frozenset({"distance_mpc", "effective_radius_kpc", "stellar_mass_solar"})
 PAPER_FACET_KEYS: tuple[str, ...] = ("categories", "authors", "year")
+_STRICT = ConfigDict(extra="forbid")
 
 
 class PathsConfig(BaseModel):
+    model_config = _STRICT
+
     raw_catalogue: Path = Path("data/udg_database.csv")
     sorted_catalogue: Path = Path("data/udg_database_sorted.csv")
     processed_ids: Path = Path("data/processed_arxiv_ids.txt")
@@ -38,12 +51,16 @@ class PathsConfig(BaseModel):
     llm_cache: Path = Path("data/llm_cache.db")
     indexed_ids: Path = Path("data/indexed_arxiv_ids.txt")
     indexing_metadata: Path = Path("data/indexing_meta.json")
+    rejections: Path = Path("data/rejected_galaxies.db")
+    run_manifest: Path = Path("data/run_manifest.json")
 
     def anchored_at(self, root: Path) -> PathsConfig:
         return self.model_copy(update={name: root / value for name, value in self})
 
 
 class EmbeddingsConfig(BaseModel):
+    model_config = _STRICT
+
     enabled: bool = True
     provider: Literal["local", "openai"] = "local"
     model: str = "all-MiniLM-L6-v2"
@@ -60,15 +77,23 @@ class EmbeddingsConfig(BaseModel):
 
 
 class ClusteringConfig(BaseModel):
+    model_config = _STRICT
+
     max_distance_mpc: float = 5.0
     min_samples: int = 2
 
 
 class DeduplicationConfig(BaseModel):
+    model_config = _STRICT
+
     max_separation_arcsec: float = 3.0
 
 
 class CatalogueConfig(BaseAppConfig):
+    """The library's config sections plus the catalogue's own, with unknown keys rejected everywhere."""
+
+    model_config = _STRICT
+
     paths: PathsConfig = Field(default_factory=PathsConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     clustering: ClusteringConfig = Field(default_factory=ClusteringConfig)

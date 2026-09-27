@@ -7,7 +7,7 @@ from typing import TypeVar
 
 import pandas as pd
 import streamlit as st
-from sci_etl_core import SearchQueryError, configure_logging
+from sci_etl_core import SearchQueryError
 from sci_etl_core.discovery import DiscoveryResult
 from sci_etl_core.embeddings import AsyncEmbedder
 from sci_etl_core.search import DiscoveryGraph, filter_graph
@@ -30,6 +30,7 @@ from udg_catalogue.literature import (
     open_paper_library,
     paper_filters,
 )
+from udg_catalogue.logs import configure_run_logging
 from udg_catalogue.maps import build_3d_figure, cluster_label, prepare_map_frame
 from udg_catalogue.paper_views import (
     build_graph_figure,
@@ -44,8 +45,8 @@ from udg_catalogue.paper_views import (
 from udg_catalogue.postprocess import build_sorted_catalogue, read_catalogue
 
 ALL = "All"
-LOGGER_NAME = "UDGPipeline"
 CONFIG_ENV_VAR = "UDG_CATALOGUE_CONFIG"
+READ_ONLY_ENV_VAR = "UDG_DASHBOARD_READ_ONLY"
 TABLE_VIEW = "Data Table"
 ANALYTICS_VIEW = "Analytics"
 PAPERS_VIEW = "Paper Search"
@@ -161,7 +162,7 @@ def current_catalogue(config: CatalogueConfig) -> pd.DataFrame:
 def refresh_catalogue(config: CatalogueConfig) -> None:
     with st.spinner("Processing data..."):
         try:
-            log = configure_logging(LOGGER_NAME, config.paths.log_file)
+            log = configure_run_logging(config.paths.log_file)
             rebuilt = build_sorted_catalogue(config, log.info)
         except Exception as error:
             st.sidebar.error(f"Error updating data: {error}")
@@ -377,7 +378,7 @@ def main() -> None:
         return
 
     st.sidebar.header("Navigation & Filters")
-    if st.sidebar.button("Refresh Data", width="stretch"):
+    if os.environ.get(READ_ONLY_ENV_VAR) != "1" and st.sidebar.button("Refresh Data", width="stretch"):
         refresh_catalogue(config)
     st.sidebar.divider()
     view_mode = st.sidebar.radio(

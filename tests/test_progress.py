@@ -3,7 +3,7 @@ import asyncio
 import pytest
 from sci_etl_core.extractors.async_base import AsyncExtractor
 from sci_etl_core.llm.relevance_async import AsyncRelevanceFilter
-from sci_etl_core.models import RawRecord, TokenUsage
+from sci_etl_core.models import ListingPage, RawRecord, TokenUsage
 from sci_etl_core.observability import (
     PageFetched,
     PageFinished,
@@ -36,11 +36,11 @@ class StaticExtractor(AsyncExtractor):
     def __init__(self, full_text):
         self.full_text = full_text
 
-    async def search(self, query, max_results, start_index):
-        return b"listing"
+    def cursor_for_offset(self, offset):
+        return str(offset)
 
-    def parse_listing(self, raw_listing, seen_ids):
-        return [RECORD], 1
+    async def fetch_page(self, query, cursor, page_size):
+        return ListingPage(records=(RECORD,), entries=1, next_cursor=str(int(cursor or 0) + 1))
 
     async def fetch_full_text(self, record):
         return self.full_text
@@ -67,11 +67,13 @@ def test_extractor_logs_listing_requests_and_downloads():
     messages = []
     extractor = LoggingExtractor(StaticExtractor("full text"), messages.append)
 
-    assert asyncio.run(extractor.search("query", 100, 200)) == b"listing"
-    assert extractor.parse_listing(b"listing", set()) == ([RECORD], 1)
+    assert extractor.cursor_for_offset(200) == "200"
+    assert asyncio.run(extractor.fetch_page("query", "200", 100)).next_cursor == "201"
+    assert asyncio.run(extractor.fetch_page("query", None, 100)).records == (RECORD,)
     assert asyncio.run(extractor.fetch_full_text(RECORD)) == "full text"
     assert messages == [
         "Fetching arXiv listing: offset 200, up to 100 entries",
+        "Fetching arXiv listing: offset 0, up to 100 entries",
         "Relevant; downloading full text (LaTeX source, then PDF)",
     ]
 
@@ -104,49 +106,61 @@ def test_shorten_truncates_long_titles():
     ("event", "info", "warning"),
     [
         (
-            RunStarted("abs:udg", 0, 500, False),
+            RunStarted(query="abs:udg", start_index=0, total_limit=500, newest_first=False),
             "Run started: query 'abs:udg', offset 0, up to 500 relevant papers",
             None,
         ),
-        (PageFetched(100, 0, 0), "Listing at offset 100 is empty; no more papers", None),
+        (PageFetched(offset=100, entries=0, new_records=0), "Listing at offset 100 is empty; no more papers", None),
         (
-            PageFetched(0, 100, 40),
+            PageFetched(offset=0, entries=100, new_records=40),
             "Listing at offset 0: 100 papers, 40 new, 60 skipped as already processed",
             None,
         ),
         (
-            RecordFinished("2601.1", "T", "processed", 12.34, entities=3),
+            RecordFinished(record_id="2601.1", title="T", outcome="processed", duration_seconds=12.34, entities=3),
             "[2601.1] Done after 12.3 s: 3 galaxies exported",
             None,
         ),
         (
-            RecordFinished("2601.1", "T", "irrelevant", 1.0),
+            RecordFinished(record_id="2601.1", title="T", outcome="irrelevant", duration_seconds=1.0),
             "[2601.1] Skipped: judged not relevant (no new observational UDG data)",
             None,
         ),
         (
-            RecordFinished("2601.1", "T", "deferred", 0.0),
+            RecordFinished(record_id="2601.1", title="T", outcome="deferred", duration_seconds=0.0),
             "[2601.1] Deferred to the next run: relevant-paper limit reached",
             None,
         ),
         (
-            RecordFinished("2601.1", "T", "failed", 2.0, error=RuntimeError("boom")),
+            RecordFinished(
+                record_id="2601.1", title="T", outcome="failed", duration_seconds=2.0, error=RuntimeError("boom")
+            ),
             None,
             "[2601.1] Failed after 2.0 s, will retry next run: RuntimeError('boom')",
         ),
         (
-            RecordFinished("", "Untitled", "skipped", 0.0),
+            RecordFinished(record_id="", title="Untitled", outcome="skipped", duration_seconds=0.0),
             None,
             "Skipped: listing entry has no arXiv id (Untitled)",
         ),
         (
-            PageFinished(0, 5.0, RunMetrics(pages=1, listed=2, processed=1, entities_exported=4)),
+            PageFinished(
+                offset=0,
+                duration_seconds=5.0,
+                metrics=RunMetrics(pages=1, listed=2, processed=1, entities_exported=4),
+            ),
             "Page at offset 0 finished in 5.0 s; run so far: 1 pages, 2 listed, 1 processed, 0 irrelevant, "
             "0 deferred, 0 failed, 0 without id, 4 galaxies exported",
             None,
         ),
         (
-            RunFinished(RunMetrics(outcome="completed", duration_seconds=61.0, token_usage=TokenUsage(2, 1000, 234))),
+            RunFinished(
+                metrics=RunMetrics(
+                    outcome="completed",
+                    duration_seconds=61.0,
+                    token_usage=TokenUsage(requests=2, prompt_tokens=1000, completion_tokens=234),
+                )
+            ),
             "Run completed in 61 s: 0 pages, 0 listed, 0 processed, 0 irrelevant, 0 deferred, 0 failed, "
             "0 without id, 0 galaxies exported, 1,234 LLM tokens",
             None,

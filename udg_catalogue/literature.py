@@ -145,14 +145,14 @@ class PaperLibrary:
     def usage_sources(self) -> list[AsyncEmbedder]:
         return [] if self._embedder is None else [self._embedder]
 
-    def memory_ingestor(self, chunker: SlidingWindowChunker, logger: Callable[[str], None]) -> MemoryIngestor:
+    def memory_ingestor(self, chunker: SlidingWindowChunker) -> MemoryIngestor:
         indexer = AsyncSearchIndexer(store=self._text_store)
         if self._embedder is None or self._vector_store is None:
             return indexer
         chunks = AsyncChunkIngestor(chunker=chunker, embedder=self._embedder, store=self._vector_store)
-        return AsyncCompositeIngestor(chunks, indexer, logger=logger)
+        return AsyncCompositeIngestor(chunks, indexer)
 
-    def searcher(self, logger: Callable[[str], None] | None = None) -> AsyncHybridSearcher:
+    def searcher(self) -> AsyncHybridSearcher:
         finder = None
         if self._embedder is not None and self._vector_store is not None:
             finder = AsyncSimilarArticleFinder(self._embedder, self._vector_store)
@@ -161,7 +161,6 @@ class PaperLibrary:
             finder,
             params=self._search_config.hybrid.to_params(),
             fusion=self._search_config.fusion.to_params(),
-            logger=logger,
         )
 
     async def count(self) -> int:
@@ -185,13 +184,12 @@ class PaperLibrary:
         mode: SearchMode = "hybrid",
         filters: Sequence[SearchFilter] = (),
         top_k: int = 20,
-        logger: Callable[[str], None] | None = None,
     ) -> DiscoveryResult:
         started = time.perf_counter()
         node = parse_query(query)
         lexical_node = None if mode == "semantic" else node
         outcome, facet_counts, matched_ids = await asyncio.gather(
-            self.searcher(logger).search(query, top_k, mode=mode, filters=filters),
+            self.searcher().search(query, top_k, mode=mode, filters=filters),
             self._text_store.facet_counts(DISPLAY_FACET_KEYS, query=lexical_node, filters=filters),
             self._matched_ids(lexical_node, filters),
         )

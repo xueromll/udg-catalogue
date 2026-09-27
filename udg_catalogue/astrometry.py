@@ -45,6 +45,15 @@ def cartesian_coordinates(
 
 
 class SkyPositionMatcher(NeighborMatcher):
+    """Group located rows that lie within ``threshold`` arcseconds of each other.
+
+    Every pair within the threshold joins one group, so exact duplicates and
+    groups of three or more rows are found, and a chain of close rows forms a
+    single group. Each group is returned as pairs of its lowest row label with
+    every other member, so deduplication keeps that row and fills its gaps from
+    the others.
+    """
+
     def __init__(self, ra_column: str = "ra", dec_column: str = "dec") -> None:
         self._ra_column = ra_column
         self._dec_column = dec_column
@@ -54,14 +63,28 @@ class SkyPositionMatcher(NeighborMatcher):
         if len(located) < 2:
             return []
         coordinates = sky_coordinates(located, self._ra_column, self._dec_column)
-        neighbours, separations, _ = coordinates.match_to_catalog_sky(coordinates, nthneighbor=2)
-        separation_arcsec = separations.to_value(u.arcsec)
-        labels = located.index.to_numpy()
-        return [
-            (int(labels[position]), int(labels[neighbour]))
-            for position, neighbour in enumerate(neighbours)
-            if separation_arcsec[position] <= threshold and labels[position] < labels[neighbour]
-        ]
+        first, second, _, _ = coordinates.search_around_sky(coordinates, threshold * u.arcsec)
+        labels = [int(label) for label in located.index]
+        groups = _Groups(labels)
+        for position, neighbour in zip(first, second, strict=True):
+            groups.join(labels[position], labels[neighbour])
+        return sorted((groups.root(label), label) for label in labels if groups.root(label) != label)
+
+
+class _Groups:
+    def __init__(self, members: Sequence[int]) -> None:
+        self._parent = {member: member for member in members}
+
+    def root(self, member: int) -> int:
+        while self._parent[member] != member:
+            self._parent[member] = self._parent[self._parent[member]]
+            member = self._parent[member]
+        return member
+
+    def join(self, first: int, second: int) -> None:
+        first_root, second_root = self.root(first), self.root(second)
+        if first_root != second_root:
+            self._parent[max(first_root, second_root)] = min(first_root, second_root)
 
 
 class CartesianDistanceFeatures(FeatureExtractor):

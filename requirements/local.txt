@@ -1,2 +1,2 @@
 -r app.txt
--e ../../sci-etl-core[async,llm,pdf,cluster,embeddings,embeddings-local,search]
+-e ../../sci-etl-core[config,async,arxiv,html,llm,pdf,processors,cluster,embeddings,embeddings-local,search]

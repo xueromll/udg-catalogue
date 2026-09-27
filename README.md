@@ -3,10 +3,10 @@
 <div align="center">
 
 [![Python](https://img.shields.io/badge/Python-3.11-blue.svg?style=flat-square)](https://www.python.org/)
-[![sci-etl-core](https://img.shields.io/badge/built_on-sci--etl--core_0.4-0b7285.svg?style=flat-square)](https://github.com/xueromll/sci-etl-core)
+[![sci-etl-core](https://img.shields.io/badge/built_on-sci--etl--core_0.6-0b7285.svg?style=flat-square)](https://github.com/xueromll/sci-etl-core)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.63-red.svg?style=flat-square)](https://streamlit.io/)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg?style=flat-square)](https://deepseek.com/)
-[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg?style=flat-square)](#testing)
+[![Coverage](https://img.shields.io/badge/coverage_(pipeline_code)-100%25-brightgreen.svg?style=flat-square)](#testing)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 </div>
@@ -15,7 +15,7 @@
 >
 > Every relevant paper is also kept in a local paper memory, so the dashboard can search the literature by keyword and by meaning, find the papers that mention a catalogued galaxy, and grow a graph of related papers.
 >
-> The ETL machinery comes from [sci-etl-core](https://github.com/xueromll/sci-etl-core): arXiv access, LLM steps, response caching, CSV upserts, resumable state, dataframe processors, local search, embeddings and discovery graphs. This repository holds the astronomy: prompts, galaxy naming and validation rules, sky-position matching, clustering features and the dashboard.
+> The ETL machinery comes from [sci-etl-core](https://github.com/xueromll/sci-etl-core): arXiv access, LLM steps, response caching, CSV export, a store for rejected extractions, resumable state, dataframe processors, local search, embeddings and discovery graphs. This repository holds the astronomy: prompts, galaxy naming and validation rules, sky-position matching, clustering features and the dashboard.
 
 ---
 
@@ -36,8 +36,9 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 
 - **Literature screening.** An LLM reads each title and abstract and excludes papers based purely on simulations or theory, such as IllustrisTNG, FIRE or EAGLE studies.
 - **Multi-format extraction.** The pipeline reads LaTeX sources first (tarballs or single gzipped files, assembled in document order), then PDFs including their tables, and uses the abstract only as a last resort.
-- **Structured LLM extraction.** DeepSeek V4-Flash runs in JSON mode, and every extracted galaxy must pass validation rules before it is stored.
-- **Astrometric cross-identification.** Galaxy names are normalised, and records within 3″ on the sky are merged using astropy.
+- **Structured LLM extraction.** DeepSeek V4-Flash runs in JSON mode, and every extracted galaxy must pass validation rules before it is stored. A rejected galaxy is logged and kept in a review store with the rule it broke.
+- **Paper provenance.** The raw catalogue has one row per galaxy per paper, tagged with the paper's arXiv id, and each galaxy in the sorted catalogue lists the papers it came from. A run manifest records the library version, model, prompts and papers behind the published catalogue.
+- **Astrometric cross-identification.** Galaxy names are normalised, and records within 3″ on the sky are merged using astropy, including exact duplicates and groups of three or more.
 - **Derived columns.** Each object gets a completeness score, a quality flag, its IAU constellation and a 3D spatial group from DBSCAN.
 - **Interactive exploration.** A Plotly 3D map and a Streamlit dashboard offer filtering, analytics and CSV export.
 - **Paper search.** Each relevant paper's full text is indexed for Boolean keyword search (SQLite FTS5 with BM25) and embedded for search by meaning. Hybrid search fuses both rankings, with category and year filters.
@@ -62,7 +63,7 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 | **Median record completeness** | 66.7% |
 | **Literature snapshot** | 2026-09-24 |
 | **Total API cost (five full runs)** | US$4.32 |
-| **ETL framework** | sci-etl-core 0.4 |
+| **ETL framework** | sci-etl-core 0.5 |
 
 ### Parameter coverage
 
@@ -86,8 +87,9 @@ flowchart LR
     C --> M["Paper memory<br/>search index + embeddings"]
     M --> S["Paper search and<br/>discovery graphs"]
     C --> D["LLM extraction<br/>JSON schema"]
-    D --> E["Validation"]
-    E --> F["Upsert by normalised name<br/>udg_database.csv"]
+    D --> E{"Validation"}
+    E -- "rejected" --> R["Review store<br/>rejected_galaxies.db"]
+    E -- "accepted" --> F["One row per galaxy per paper<br/>udg_database.csv"]
     F --> G["Post-processing"]
     G --> H["udg_database_sorted.csv<br/>figures, 3D map, dashboard"]
 ```
@@ -96,11 +98,11 @@ flowchart LR
 |---|---|---|
 | **Screening** | The query `cat:astro-ph.GA AND abs:ultra-diffuse` is paged from the newest submission. The LLM keeps papers with new observational UDG measurements. Every screened ID is saved and never screened again. | [pipeline.py](udg_catalogue/pipeline.py), [prompts.py](udg_catalogue/prompts.py) |
 | **Paper memory** | Each relevant paper's title, abstract, full text, authors, categories and year go into a keyword index (`paper_index.db`). The full text is also split into 350-word passages and embedded into `paper_memory.db`. A failure here is logged and never costs the paper its extraction. | [literature.py](udg_catalogue/literature.py) |
-| **Extraction** | For each galaxy, the LLM returns `galaxy_name`, `ra`, `dec`, `distance_mpc`, `effective_radius_kpc`, `stellar_mass_solar` and `dark_matter_fraction`. Percentages are converted to fractions, and values the paper doesn't report are `null`. | [prompts.py](udg_catalogue/prompts.py) |
-| **Validation** | A record is rejected if its name is missing or contains a simulation keyword as a whole word (e.g. `tng`, `mock`, `toy`). It is also rejected if RA/Dec fall outside [0°, 360°] / [−90°, 90°], or if all six measurements are empty. | [validation.py](udg_catalogue/validation.py) |
-| **Name matching** | Names are compared after normalisation: NFKC and case folding, punctuation removed, `Dragonfly` → `DF`, leading zeros stripped. So `DF 44`, `DF-44` and `Dragonfly 044` match, while `KDG 44` and `DF 44` stay distinct. A new record only fills a stored row's missing values and never overwrites them. | [naming.py](udg_catalogue/naming.py) |
-| **Sky matching** | Nearest neighbours are found with `SkyCoord.match_to_catalog_sky`. Rows within 3″ are merged, filling gaps without discarding values. | [astrometry.py](udg_catalogue/astrometry.py) |
-| **Post-processing** | The dark-matter fraction is clipped to [0, 1], then completeness, constellation, spatial group and quality flag are computed, and rows are sorted. | [postprocess.py](udg_catalogue/postprocess.py) |
+| **Extraction** | For each object the paper classifies as a UDG or UDG candidate, the LLM returns `galaxy_name`, `ra`, `dec`, `distance_mpc`, `effective_radius_kpc`, `stellar_mass_solar` and `dark_matter_fraction`. The prompt fixes the units: ICRS decimal degrees, with sexagesimal positions converted; Mpc; physical kpc, never converted from an angle; and solar masses, converted from logarithms. Percentages become fractions, only central values are kept, and values the paper doesn't report, limits included, are `null`. | [prompts.py](udg_catalogue/prompts.py) |
+| **Validation** | A record is rejected if its name is missing, contains a simulation keyword as a whole word (e.g. `tng`, `mock`, `toy`), or only identifies the object within its paper, such as `4692`, `ID 4692`, `No. 12`, `Object 3`, `source 7` or `# 5`. It is also rejected if a value falls outside its physical range: RA in [0°, 360°], Dec in [−90°, 90°], distance in (0, 10⁴] Mpc, effective radius in (0, 100] kpc, stellar mass in (0, 10¹²] M☉ and dark-matter fraction in [0, 1]. Out-of-range values are rejected, not clipped, because a value such as a dark-matter fraction of 96 usually means the paper was misread. Finally, a record needs at least one physical measurement or both RA and Dec. Each rejected galaxy is logged with its reason and stored in `data/rejected_galaxies.db` with a rule code (`no-name`, `paper-local-name`, `simulation-keyword`, `not-a-number`, `not-positive`, `out-of-range` or `no-measurement`); see [Reviewing Rejected Galaxies](#reviewing-rejected-galaxies). Accepted galaxies are appended to `udg_database.csv` with the paper's arXiv id in `record_id`; a paper that is extracted again replaces its own rows. | [validation.py](udg_catalogue/validation.py), [pipeline.py](udg_catalogue/pipeline.py) |
+| **Name matching** | Names are compared after normalisation: NFKC and case folding, punctuation removed, `Dragonfly` → `DF`, leading zeros stripped. So `DF 44`, `DF-44` and `Dragonfly 044` match, while `KDG 44` and `DF 44` stay distinct. When rows are merged, the values of the first paper processed are kept, and later papers only fill values it lacks. | [naming.py](udg_catalogue/naming.py) |
+| **Sky matching** | Every pair of rows within 3″ is found with `SkyCoord.search_around_sky`, and pairs that share a row are grouped, so exact duplicates and groups of three or more become one row. Merging fills gaps without discarding values. | [astrometry.py](udg_catalogue/astrometry.py) |
+| **Post-processing** | The sorted catalogue is built from the raw catalogue alone. Measurements given as text, such as `3.2 ± 0.4`, are left empty here and stay readable in the raw catalogue. Each merged galaxy lists its papers in `source_papers`. Completeness, constellation, spatial group and quality flag are computed, and rows are sorted. Values are kept as extracted; nothing is clipped. | [postprocess.py](udg_catalogue/postprocess.py) |
 
 **Derived columns**
 
@@ -122,6 +124,7 @@ flowchart LR
 | `quality_flag` | string | — | `Confirmed`, `Needs Review` or `Low Confidence` |
 | `constellation` | string | — | IAU constellation, or `Unknown` without a valid position |
 | `cluster_id` | integer | — | DBSCAN group label; −1 if ungrouped |
+| `source_papers` | string | — | arXiv ids of the papers whose rows were merged into this object, separated by `; ` |
 | `ra`, `dec` | float | deg | ICRS coordinates |
 | `distance_mpc` | float | Mpc | Distance |
 | `effective_radius_kpc` | float | kpc | Effective (half-light) radius |
@@ -130,17 +133,24 @@ flowchart LR
 
 Empty cells mean the value was not reported or could not be extracted.
 
+The raw catalogue, `data/udg_database.csv`, has one row per galaxy per paper: `record_id` (the arXiv id), `galaxy_name`, the six measurements as the model returned them, and `extra`, a JSON object holding any other fields the model returned. It is not committed; `data/run_manifest.json` records its row count and SHA-256.
+
 ## Known Limitations
 
 Values are extracted automatically, so check them against the original papers before using them in quantitative work.
 
 - **Unchecked extraction.** No values were checked by hand, and a few are physically implausible (for example, one object has $M_\star > 10^{11}$ M☉).
-- **No provenance or uncertainties.** The catalogue does not record which paper each value came from, and error bars and upper limits are discarded.
+- **Provenance per object, not per value.** `source_papers` lists the papers each object's rows came from, and the raw catalogue keeps every paper's values, but the sorted catalogue does not say which paper each value came from. Error bars and upper limits are discarded.
 - **Mixed definitions.** Distance methods, photometric bands and dark-matter apertures differ between papers and are not recorded.
-- **First value wins.** When papers disagree, the value from the first paper processed is kept.
+- **First value wins.** When papers disagree, the sorted catalogue keeps the value from the first paper processed. The raw catalogue keeps all of them.
 - **No UDG definition imposed.** The catalogue takes each paper's classification as given and applies no size or surface-brightness cut, such as $R_\mathrm{e} \geq 1.5$ kpc and $\mu_{0,g} \geq 24$ mag arcsec⁻² ([van Dokkum et al. 2015](https://doi.org/10.1088/2041-8205/798/2/L45)).
 - **Spatial groups are not bound structures.** With `min_samples = 2`, any two objects within 5 Mpc form a group, and distance errors are often of that size.
 - **Remaining duplicates.** Name variants outside the normalisation rules (e.g. `N1052-DF2` and `NGC 1052-DF2`) are merged only when both records have coordinates.
+- **Paper-local names and clipped values in the committed catalogue.** The catalogue committed on 2026-09-24 predates the rules above. It holds 282 names that are bare integers and 40 of the form `ID n`, `No. n`, `Object n`, `source n` or `# n`, whose values may come from different papers that reused the same number, and its dark-matter fractions were clipped to [0, 1], so the 8 values of exactly 0 and 6 of exactly 1 may be clipped errors. The next rebuild drops them.
+- **Objects that are not UDGs in the committed catalogue.** It was extracted before the prompt limited extraction to the objects a paper classifies as UDGs, and it includes, for example, the ultra-compact dwarf `NGC 7531-UCD1` (effective radius 0.014 kpc) and the galaxy cluster `Abell 1697` (stellar mass 1.3×10¹³ M☉). The next rebuild drops them.
+- **No `source_papers` in the committed catalogue.** The catalogue committed on 2026-09-24 was built before rows named their paper, so it has no `source_papers` column and no run manifest. The next rebuild adds both.
+- **Duplicates in the committed catalogue.** The catalogue committed on 2026-09-24 was built before sky matching merged exact duplicates and groups of three or more. It still holds 124 pairs of rows within 3″ of each other, which the next rebuild merges.
+- **Checks on the committed catalogue.** `tests/test_published_catalogue.py` checks the committed catalogue against these rules: no two galaxies within 3″, no paper-local names, every value within its physical range, and no dark-matter fraction of exactly 0 or 1. The catalogue committed on 2026-09-24 fails them, and the checks are marked as expected failures until the next rebuild passes them.
 - **Not exactly reproducible.** LLM output varies between runs, so a rebuild gives a similar catalogue, not an identical file.
 
 ---
@@ -150,7 +160,7 @@ Values are extracted automatically, so check them against the original papers be
 | Domain | Technologies |
 |--------|-------------|
 | **Language** | Python 3.11 |
-| **ETL framework** | sci-etl-core (arXiv extraction, LLM steps, CSV upsert, state, processors) |
+| **ETL framework** | sci-etl-core (arXiv extraction, LLM steps, CSV export, rejection store, state, processors) |
 | **AI / LLM** | DeepSeek V4-Flash through sci-etl-core's OpenAI-compatible client |
 | **Document parsing** | pdfplumber, LaTeX parsing in sci-etl-core |
 | **Data processing** | pandas, NumPy, scikit-learn (DBSCAN) |
@@ -171,7 +181,8 @@ udg-catalogue/
 ├── app.py                   # Streamlit dashboard
 ├── config.yaml              # Pipeline, paths, embeddings, search, clustering and deduplication settings
 ├── data/
-│   └── udg_database_sorted.csv  # Released catalogue; local pipeline state is written here too
+│   ├── udg_database_sorted.csv  # Released catalogue; local pipeline state is written here too
+│   └── run_manifest.json        # What produced the released catalogue
 ├── output/                  # Figures, 3D map and run log (generated, not committed)
 ├── udg_catalogue/
 │   ├── config.py            # CatalogueConfig, built on sci-etl-core's BaseAppConfig
@@ -183,6 +194,8 @@ udg-catalogue/
 │   ├── validation.py        # Rules every extracted galaxy must pass
 │   ├── astrometry.py        # Sky matching, 3D features, constellations, cross-matching
 │   ├── postprocess.py       # Processor chain that builds the sorted catalogue
+│   ├── manifest.py          # Run manifest written beside the sorted catalogue
+│   ├── logs.py              # Run log shared with sci-etl-core's log lines
 │   ├── maps.py              # Plotly 3D map shared by main.py and the dashboard
 │   └── analytics.py         # Statistical figures shared by main.py and the dashboard
 ├── tests/                   # Offline test suite
@@ -203,14 +216,16 @@ udg-catalogue/
 | File | Committed | Contents |
 |---|---|---|
 | `data/udg_database_sorted.csv` | yes | Released catalogue |
-| `data/udg_database.csv` | no | Raw upserted extractions, input to post-processing |
+| `data/run_manifest.json` | yes | sci-etl-core version, model, base URL, prompt hashes, query, processed arXiv ids, and row counts and SHA-256 of both catalogues |
+| `data/udg_database.csv` | no | Raw extractions, one row per galaxy per paper, input to post-processing |
+| `data/rejected_galaxies.db` | no | Rejected galaxies with their rule codes, for review |
 | `data/processed_arxiv_ids.txt`, `data/pipeline_meta.json` | no | Resumable pipeline state |
 | `data/paper_index.db`, `data/paper_memory.db` | no | Paper memory: keyword index and passage embeddings |
 | `data/indexed_arxiv_ids.txt`, `data/indexing_meta.json` | no | Resumable state of `--index-papers` |
 | `data/llm_cache.db` | no | Cached LLM answers |
 | `output/figures/*.png` | no | Statistical figures (300 dpi) |
 | `output/udg_3d_map.html` | no | Standalone 3D map |
-| `output/pipeline.log` | no | Run log |
+| `output/pipeline.log` | no | Run log, including sci-etl-core's own lines prefixed with the arXiv id of the paper they concern |
 
 Every location can be changed under `paths` in `config.yaml`. Relative paths are resolved against the directory that holds the config file.
 
@@ -239,6 +254,7 @@ On Windows, activate with `.venv\Scripts\activate`. Then set `DEEPSEEK_API_KEY` 
 | `python main.py --rescan` | Pages the whole listing from the newest submission, for example after arXiv reorders it |
 | `python main.py --index-papers` | Adds papers screened before the paper memory existed to the search index, without extracting galaxies (see [Paper Search](#paper-search)) |
 | `python main.py --skip-ingestion` | Rebuilds the outputs from an existing `udg_database.csv` without calling arXiv or DeepSeek |
+| `python main.py --replace-catalogue` | Writes the sorted catalogue even when `udg_database.csv` has fewer rows than the published catalogue has galaxies. Without it, such a raw catalogue is taken as incomplete, as in a fresh clone, and the published file is kept. |
 | `python main.py --config other.yaml` | Uses another configuration file; its paths are resolved relative to that file |
 
 The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing, or `EMBEDDING_API_KEY` with the `openai` embeddings provider. It is `1` when ingestion was aborted; the outputs are still rebuilt from the data already collected. Press Ctrl+C once to stop cleanly: papers in progress finish, the state is saved, and the exit code is `130`. A second Ctrl+C stops at once.
@@ -258,11 +274,12 @@ The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing, or `
 | `search.graph.depth` / `search.graph.fanout` / `search.graph.max_nodes` | `2` / `8` / `80` | How far and how wide a discovery graph grows |
 | `search.graph.min_weight` | `0.35` | Weakest link kept in a discovery graph |
 | `http.max_retries` / `http.backoff_factor` | `4` / `5.0` | Retry policy for arXiv requests |
+| `full_text.max_concurrency` | `4` | arXiv requests in flight at once, listing and full text together, however many papers `pipeline.max_concurrency` processes |
 | `deduplication.max_separation_arcsec` | `3.0` | Sky-matching radius |
 | `clustering.max_distance_mpc` | `5.0` | DBSCAN `eps` |
 | `clustering.min_samples` | `2` | DBSCAN `min_samples` |
 
-Configuration written for sci-etl-core 0.2 used `pipeline.max_records` and `pipeline.max_workers`. They still load until sci-etl-core 0.5, with a deprecation warning.
+Every section rejects keys it does not declare, and the error names the key, so a typo fails at startup instead of being ignored. Configuration written for sci-etl-core 0.2 used `pipeline.max_records` and `pipeline.max_workers`; rename them `pipeline.total_limit` and `pipeline.max_concurrency`.
 
 ### Paper Search
 
@@ -283,10 +300,42 @@ The committed catalogue was rebuilt from scratch on 2026-09-24 with sci-etl-core
 ```bash
 mkdir -p archive
 mv data/udg_database.csv data/processed_arxiv_ids.txt data/pipeline_meta.json archive/
-python main.py --rescan
+mv data/rejected_galaxies.db archive/  # if it exists
+python main.py --rescan --replace-catalogue
 ```
 
+The sorted catalogue is built from `udg_database.csv` alone, so the rebuild replaces the published rows instead of adding to them. `--replace-catalogue` lets it write a catalogue with fewer galaxies than the published one. A raw catalogue written before rows named their paper has no `record_id` column; post-processing refuses it and asks for a rebuild.
+
 A rebuild reprocesses every matching paper. The 2026-09-24 rebuild screened 557 submissions, read 312 relevant papers in full, and cost ¥11.51 (about US$1.71). Answers already in `data/llm_cache.db` cost nothing, so move it to `archive/` as well to get fresh answers from the model.
+
+### Reviewing Rejected Galaxies
+
+Every galaxy the validation rules reject is stored in `data/rejected_galaxies.db` with its arXiv id, the values the model returned, each broken rule's code and message, and the model and a hash of the prompt that produced it. Rejecting the same galaxy again with the same model and prompt adds no new entry and keeps any review decision. To list the entries not yet reviewed:
+
+```python
+import asyncio
+
+from sci_etl_core.claims import AsyncSqliteRejectionStore
+
+
+async def show_rejections() -> None:
+    store = AsyncSqliteRejectionStore("data/rejected_galaxies.db")
+    try:
+        for entry in await store.unresolved(limit=50):
+            codes = ", ".join(violation.code for violation in entry.violations)
+            print(entry.record_id, entry.entity.get("galaxy_name"), codes)
+    finally:
+        await store.aclose()
+
+
+asyncio.run(show_rejections())
+```
+
+`store.resolve(entry.entry_id, "accepted", corrected={...})` records a decision and an optional corrected entity. Resolving an entry does not change the catalogue; a corrected galaxy reaches it only through a fix to the prompt or the rules and a rebuild.
+
+### Logs
+
+`output/pipeline.log` and the console receive the catalogue's progress lines and sci-etl-core's own lines: failed downloads, retries, and rejected galaxies with their reasons. Lines about one paper start with its arXiv id, such as `[2601.00001v1]`.
 
 ### Docker (Recommended)
 
@@ -294,10 +343,10 @@ A rebuild reprocesses every matching paper. The 2026-09-24 rebuild screened 557 
 docker compose up --build
 ```
 
-The dashboard is served at `http://localhost:8501`. The Compose file passes `DEEPSEEK_API_KEY` and `EMBEDDING_API_KEY` from your environment and mounts the project directory, so the container reads and writes the same catalogue files and paper memory as a local run. The image installs the CPU build of PyTorch, and the embedding model is cached in `.cache/` inside the project directory, so it is downloaded once. To run the pipeline inside the container:
+The dashboard is served at `http://localhost:8501`, on this machine only. Its container runs as an unprivileged user, sees only `data/`, `.cache/` and `config.yaml`, never receives `DEEPSEEK_API_KEY` or your `.env` file, and hides **Refresh Data**, so a visitor cannot rewrite the catalogue. It reads the same catalogue files and paper memory as a local run. The image installs the CPU build of PyTorch, and the embedding model is cached in `.cache/` inside the project directory, so it is downloaded once. The `pipeline` service is the one that receives `DEEPSEEK_API_KEY` and writes `data/` and `output/`. To run the pipeline inside a container:
 
 ```bash
-docker compose run --rm udg-pipeline python main.py
+docker compose run --rm pipeline
 ```
 
 ### Developing Against a Local sci-etl-core
@@ -309,7 +358,7 @@ pip install -r requirements/local.txt
 python -c "import sci_etl_core; print(sci_etl_core.__file__)"
 ```
 
-The second command should print a path inside your sci-etl-core checkout. An editable install records its absolute path, so reinstall if you move the checkout. `requirements.txt` accepts any 0.4.x release of sci-etl-core; raise the range there to move to a newer minor release after running the tests against it.
+The second command should print a path inside your sci-etl-core checkout. An editable install records its absolute path, so reinstall if you move the checkout. `requirements.txt` accepts sci-etl-core 0.6.0 or a later 0.6.x release; raise the range there to move to a newer minor release after running the tests against it.
 
 ---
 
@@ -324,7 +373,7 @@ The second command should print a path inside your sci-etl-core checkout. An edi
 * **Data Table.** Paginated view with 10, 50 or 100 objects per page.
 * **Analytics View.** Stellar mass and effective radius distributions, plus a mass–radius scatter plot coloured by completeness, all computed on the filtered selection.
 * **Data Export.** Download the filtered selection as CSV.
-* **Refresh Data.** Re-run post-processing on `data/udg_database.csv` without ingesting new papers.
+* **Refresh Data.** Re-run post-processing on `data/udg_database.csv` without ingesting new papers. Hidden when `UDG_DASHBOARD_READ_ONLY=1`, as in the Compose file.
 * **Paper Search.** Search the indexed papers by keyword, by meaning, or both (hybrid), with Boolean syntax such as `"dark matter" -simulation`, `title:dwarf*` or `NEAR(globular cluster, 5)`. Filter by arXiv category and publication year, and see the matching passage of each paper with the matched words highlighted.
 * **Papers Mentioning a Galaxy.** Pick a galaxy from the (filtered) catalogue to find the papers whose text names it.
 * **Related Papers.** Grow a discovery graph around any result: papers linked by similar content or shared authors, coloured by community, with a table of arXiv links. The category and year filters prune a graph that is already grown, and moving to a paper that was already in a graph reuses the links found for it.
@@ -374,12 +423,12 @@ pip install -r requirements/dev.txt
 pytest --cov
 ```
 
-Coverage of `udg_catalogue` and `main.py` must stay at 100%. `pyproject.toml` enforces this, and CI checks it on every push and pull request.
+Coverage of `udg_catalogue` and `main.py` must stay at 100%. `pyproject.toml` enforces this, and CI checks it on every push and pull request. The dashboard, `app.py`, is exercised by the `AppTest` tests but is not part of that measure, so the badge's 100% does not cover it.
 
 Beyond unit tests:
 
 - **End-to-end runs.** The pipeline was run five times from a cleared state. The runs checked robustness to missing or malformed PDFs, JSON schema parsing with percentage conversion, and the deduplication and clustering steps.
-- **Verified migration.** The move to sci-etl-core was checked by replaying the catalogue through the old and new code. The CSV upserts matched exactly. The sorted catalogue matched cell for cell, except for three rows with an invalid right ascension. The walkthrough is the case study in sci-etl-core's [MIGRATION.md](https://github.com/xueromll/sci-etl-core/blob/master/MIGRATION.md).
+- **Verified migration.** The move to sci-etl-core was checked by replaying the catalogue through the old and new code. The CSV upserts matched exactly. The sorted catalogue matched cell for cell, except for three rows with an invalid right ascension. The walkthrough is sci-etl-core's [Migrating a pipeline](https://xueromll.github.io/sci-etl-core/latest/guide/migrating-a-pipeline/) guide.
 
 ---
 
@@ -400,7 +449,7 @@ Contributions are welcome, from corrections to catalogue values to code improvem
 
 ## Citation
 
-If you use this project in your research, please cite it, together with the original papers for any values you use:
+If you use this project in your research, please cite it, together with the original papers for any values you use. `source_papers` lists the papers each object came from, but not which paper gave each value (see [Known Limitations](#known-limitations)), so check every value you use against those papers before citing it:
 
 ```bibtex
 @misc{udg_catalogue_2026,

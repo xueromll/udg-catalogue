@@ -33,27 +33,27 @@ SHARED_AUTHORS = ["Pieter van Dokkum", "Shany Danieli", "Roberto Abraham"]
 PAPERS = [
     (
         RawRecord(
-            "2601.00001",
-            "Dragonfly 44 is dark matter dominated",
-            "Stellar kinematics of the ultra-diffuse galaxy Dragonfly 44.",
+            record_id="2601.00001",
+            title="Dragonfly 44 is dark matter dominated",
+            abstract="Stellar kinematics of the ultra-diffuse galaxy Dragonfly 44.",
             metadata={"categories": ["astro-ph.GA"], "authors": SHARED_AUTHORS, "year": "2016"},
         ),
         "We measure the velocity dispersion of Dragonfly 44 in the Coma cluster.",
     ),
     (
         RawRecord(
-            "2601.00002",
-            "A galaxy lacking dark matter",
-            "NGC 1052-DF2 has globular clusters but little dark matter.",
+            record_id="2601.00002",
+            title="A galaxy lacking dark matter",
+            abstract="NGC 1052-DF2 has globular clusters but little dark matter.",
             metadata={"categories": ["astro-ph.GA"], "authors": SHARED_AUTHORS, "year": "2018"},
         ),
         "The ultra-diffuse galaxy NGC 1052-DF2 has a low velocity dispersion.",
     ),
     (
         RawRecord(
-            "2601.00003",
-            "Tidal features of dwarf galaxies",
-            "Deep photometry of dwarf galaxies in the Fornax cluster.",
+            record_id="2601.00003",
+            title="Tidal features of dwarf galaxies",
+            abstract="Deep photometry of dwarf galaxies in the Fornax cluster.",
             metadata={"categories": ["astro-ph.CO", "astro-ph.GA"], "authors": ["Carla Other"], "year": "2024"},
         ),
         "Tidal tails and shells around dwarf galaxies.",
@@ -90,7 +90,7 @@ def build_library(semantic=True, **options):
 
 
 async def ingest_papers(library):
-    ingestor = library.memory_ingestor(build_chunker(EmbeddingsConfig(chunk_words=8, overlap_words=2)), print)
+    ingestor = library.memory_ingestor(build_chunker(EmbeddingsConfig(chunk_words=8, overlap_words=2)))
     for record, text in PAPERS:
         await ingestor.ingest(record, text)
 
@@ -139,7 +139,7 @@ def test_semantic_library_embeds_chunks_and_indexes_text():
     library = build_library()
 
     assert library.semantic
-    assert isinstance(library.memory_ingestor(build_chunker(EmbeddingsConfig()), print), AsyncCompositeIngestor)
+    assert isinstance(library.memory_ingestor(build_chunker(EmbeddingsConfig())), AsyncCompositeIngestor)
     assert len(library.usage_sources) == 1
     filled(library)
     assert asyncio.run(library.count()) == 3
@@ -151,7 +151,7 @@ def test_lexical_library_only_indexes_text():
 
     assert not library.semantic
     assert library.usage_sources == []
-    assert isinstance(library.memory_ingestor(build_chunker(EmbeddingsConfig()), print), AsyncSearchIndexer)
+    assert isinstance(library.memory_ingestor(build_chunker(EmbeddingsConfig())), AsyncSearchIndexer)
     assert [type(source.source) for source in library.edge_sources()] == [MetadataEdgeSource]
 
 

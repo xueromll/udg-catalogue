@@ -104,6 +104,23 @@ def test_chunk_overlap_must_be_shorter_than_the_chunk(tmp_path):
         load_catalogue_config(config_path)
 
 
+@pytest.mark.parametrize(
+    ("yaml_text", "key"),
+    [
+        ("paths:\n  raw_catalog: data/x.csv\n", "paths.raw_catalog"),
+        ("deduplication:\n  max_separation: 2.0\n", "deduplication.max_separation"),
+        ("pipeline:\n  max_records: 10\n", "pipeline.max_records"),
+        ("clustring:\n  min_samples: 3\n", "clustring"),
+    ],
+)
+def test_an_unknown_key_fails_validation_and_is_named(tmp_path, yaml_text, key):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml_text, encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match=key.replace(".", r"\.")):
+        load_catalogue_config(config_path)
+
+
 def test_missing_config_file_raises_configuration_error(tmp_path):
     with pytest.raises(ConfigurationError):
         load_catalogue_config(tmp_path / "missing.yaml")

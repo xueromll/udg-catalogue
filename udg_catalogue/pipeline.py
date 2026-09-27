@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import httpx
 from sci_etl_core import (
     AsyncArxivExtractor,
-    AsyncCsvUpsertExporter,
+    AsyncCsvExporter,
     AsyncEntityExtractor,
     AsyncETLPipeline,
+    AsyncExporter,
     AsyncFileStateManager,
     AsyncLLMClient,
     AsyncLLMEntityExtractor,
@@ -21,24 +22,31 @@ from sci_etl_core import (
     RawRecord,
     ShutdownSignal,
 )
+from sci_etl_core.claims import AsyncRejectionStore, AsyncSqliteRejectionStore
 from sci_etl_core.config import PipelineConfig
 from sci_etl_core.parsers import LatexTarballParser, PdfPlumberParser
 from sci_etl_core.search import AsyncTextSearchStore
 
-from udg_catalogue.config import FRACTION_BOUNDS, KEY_COLUMN, MEASUREMENT_FIELDS, CatalogueConfig
+from udg_catalogue.config import KEY_COLUMN, MEASUREMENT_FIELDS, CatalogueConfig
 from udg_catalogue.literature import PaperLibrary, build_chunker, open_paper_library
-from udg_catalogue.naming import GalaxyNameNormalizer
 from udg_catalogue.progress import LoggingExtractor, LoggingParser, LoggingRelevanceFilter, PipelineEventLogger
 from udg_catalogue.prompts import EXTRACTION_PROMPT, RELEVANCE_PROMPT
-from udg_catalogue.validation import ValidatedEntityExtractor, build_galaxy_validator
+from udg_catalogue.validation import build_galaxy_validator
 
 EXTRACTION_RESULT_KEY = "galaxies"
-PipelineBuilder = Callable[..., AsyncETLPipeline]
+PipelineBuilder = Callable[..., AsyncETLPipeline[Any]]
 
 
-class NoEntityExtractor(AsyncEntityExtractor):
+class NoEntityExtractor(AsyncEntityExtractor[dict[str, Any]]):
     async def extract(self, text: str | bytes) -> list[dict[str, Any]]:
         return []
+
+
+class DiscardingExporter(AsyncExporter[Any]):
+    """Keep nothing: the indexing run fills the paper search index and must never touch the catalogue."""
+
+    async def write(self, record: RawRecord, entities: Sequence[Any]) -> None:
+        return None
 
 
 class UnindexedRelevanceFilter(AsyncRelevanceFilter):
@@ -52,13 +60,9 @@ class UnindexedRelevanceFilter(AsyncRelevanceFilter):
         return await self._inner.is_relevant(record)
 
 
-def build_catalogue_exporter() -> AsyncCsvUpsertExporter:
-    return AsyncCsvUpsertExporter(
-        key_column=KEY_COLUMN,
-        value_columns=list(MEASUREMENT_FIELDS),
-        normalizer=GalaxyNameNormalizer(),
-        numeric_clip=dict(FRACTION_BOUNDS),
-    )
+def build_catalogue_exporter(config: CatalogueConfig) -> AsyncCsvExporter:
+    """Write the raw catalogue: one row per galaxy a paper reports, tagged with the paper's arXiv id."""
+    return AsyncCsvExporter(config.paths.raw_catalogue, [KEY_COLUMN, *MEASUREMENT_FIELDS])
 
 
 def build_http_client(config: CatalogueConfig) -> httpx.AsyncClient:
@@ -72,17 +76,17 @@ def build_llm_client(config: CatalogueConfig) -> AsyncLLMClient:
 def build_entity_extractor(
     config: CatalogueConfig,
     llm_client: AsyncLLMClient,
-    logger: logging.Logger,
-) -> ValidatedEntityExtractor:
-    return ValidatedEntityExtractor(
-        AsyncLLMEntityExtractor(
-            llm_client=llm_client,
-            system_prompt=EXTRACTION_PROMPT,
-            result_key=EXTRACTION_RESULT_KEY,
-            timeout=config.llm.timeout,
-        ),
-        build_galaxy_validator(),
-        logger=logger.info,
+    rejections: AsyncRejectionStore | None = None,
+) -> AsyncLLMEntityExtractor[dict[str, Any]]:
+    """Extract galaxies and apply the catalogue rules; each rejected galaxy is logged with its reasons and kept."""
+    return AsyncLLMEntityExtractor(
+        llm_client,
+        EXTRACTION_PROMPT,
+        result_key=EXTRACTION_RESULT_KEY,
+        timeout=config.llm.timeout,
+        validator=build_galaxy_validator(),
+        rejections=rejections,
+        label_field=KEY_COLUMN,
     )
 
 
@@ -95,19 +99,25 @@ def _assemble(
     shutdown: ShutdownSignal | None,
     *,
     indexing: bool,
-) -> AsyncETLPipeline:
+) -> AsyncETLPipeline[Any]:
     cache = AsyncSqliteLLMResponseCache(config.paths.llm_cache)
-    cached_llm = CachingLLMClient(llm_client, cache, model=config.llm.model, logger=logger.warning)
+    cached_llm = CachingLLMClient(llm_client, cache, model=config.llm.model)
     relevance_filter: AsyncRelevanceFilter = AsyncLLMRelevanceFilter(
         llm_client=cached_llm, system_prompt=RELEVANCE_PROMPT
     )
-    entity_extractor: AsyncEntityExtractor
+    entity_extractor: AsyncEntityExtractor[dict[str, Any]]
+    exporter: AsyncExporter[Any]
+    closeables: list[Any] = [http_client, llm_client, cache, *library.closeables]
     if indexing:
         relevance_filter = UnindexedRelevanceFilter(relevance_filter, library.text_store)
         entity_extractor = NoEntityExtractor()
+        exporter = DiscardingExporter()
         state_manager = AsyncFileStateManager(config.paths.indexed_ids, config.paths.indexing_metadata)
     else:
-        entity_extractor = build_entity_extractor(config, cached_llm, logger)
+        rejections = AsyncSqliteRejectionStore(config.paths.rejections)
+        closeables.append(rejections)
+        entity_extractor = build_entity_extractor(config, cached_llm, rejections)
+        exporter = build_catalogue_exporter(config)
         state_manager = AsyncFileStateManager(config.paths.processed_ids, config.paths.pipeline_metadata)
     extractor = AsyncArxivExtractor.from_config(
         config.http,
@@ -115,19 +125,17 @@ def _assemble(
         client=http_client,
         pdf_parser=LoggingParser(PdfPlumberParser(), "PDF", logger.info),
         latex_parser=LoggingParser(LatexTarballParser(), "LaTeX source", logger.info),
-        logger=logger.info,
+        full_text=config.full_text,
     )
     return AsyncETLPipeline.from_config(
         config.pipeline,
         extractor=LoggingExtractor(extractor, logger.info),
         relevance_filter=LoggingRelevanceFilter(relevance_filter, logger.info),
         entity_extractor=entity_extractor,
-        exporter=build_catalogue_exporter(),
+        exporter=exporter,
         state_manager=state_manager,
-        destination=str(config.paths.raw_catalogue),
-        logger=logger.warning,
-        closeables=[http_client, llm_client, cache, *library.closeables],
-        memory_ingestor=library.memory_ingestor(build_chunker(config.embeddings), logger.warning),
+        closeables=closeables,
+        memory_ingestor=library.memory_ingestor(build_chunker(config.embeddings)),
         shutdown=shutdown,
         on_event=PipelineEventLogger(logger.info, logger.warning),
         usage_sources=[llm_client, *library.usage_sources],
@@ -141,7 +149,7 @@ def build_pipeline(
     llm_client: AsyncLLMClient,
     library: PaperLibrary,
     shutdown: ShutdownSignal | None = None,
-) -> AsyncETLPipeline:
+) -> AsyncETLPipeline[Any]:
     return _assemble(config, logger, http_client, llm_client, library, shutdown, indexing=False)
 
 
@@ -152,7 +160,7 @@ def build_indexing_pipeline(
     llm_client: AsyncLLMClient,
     library: PaperLibrary,
     shutdown: ShutdownSignal | None = None,
-) -> AsyncETLPipeline:
+) -> AsyncETLPipeline[Any]:
     return _assemble(config, logger, http_client, llm_client, library, shutdown, indexing=True)
 
 
