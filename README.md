@@ -17,6 +17,9 @@
 >
 > The ETL machinery comes from [sci-etl-core](https://github.com/xueromll/sci-etl-core): arXiv access, LLM steps, response caching, CSV export, a store for rejected extractions, resumable state, dataframe processors, local search, embeddings and discovery graphs. This repository holds the astronomy: prompts, galaxy naming and validation rules, sky-position matching, clustering features and the dashboard.
 
+> [!WARNING]
+> **This is a prototype, not a confirmed scientific catalogue.** The values are extracted automatically by an LLM and have not been checked against the original papers. They can be wrong, duplicated or misattributed (see [Known Limitations](#known-limitations)). Before you use any value, check it against the papers listed in `source_papers`, and cite those papers, not this catalogue.
+
 ---
 
 ## Quickstart
@@ -444,22 +447,6 @@ Beyond unit tests:
 ## Contributing
 
 Contributions are welcome, from corrections to catalogue values to code improvements. Please open an issue first to discuss what you'd like to change. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
-
-## Citation
-
-If you use this project in your research, please cite it, together with the original papers for any values you use. `source_papers` lists the papers each object came from, but not which paper gave each value (see [Known Limitations](#known-limitations)), so check every value you use against those papers before citing it:
-
-```bibtex
-@misc{udg_catalogue_2026,
-  author       = {Lan},
-  title        = {{UDG Catalogue}: Automated ETL Pipeline for Ultra-Diffuse Galaxies},
-  year         = {2026},
-  howpublished = {GitHub repository},
-  url          = {https://github.com/xueromll/udg-catalogue}
-}
-```
 
 ---
 
