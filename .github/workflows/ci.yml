@@ -28,10 +28,12 @@ jobs:
             requirements.txt
             requirements/*.txt
 
-      - name: Install dependencies
+      - name: Install dependencies, with sci-etl-core from its master branch until 0.6.0 is on PyPI
         env:
           PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
-        run: python -m pip install -r requirements.txt -r requirements/dev.txt
+        run: |
+          python -m pip install "sci-etl-core[config,async,arxiv,html,llm,pdf,processors,cluster,embeddings,embeddings-local,search] @ git+https://github.com/xueromll/sci-etl-core@master"
+          python -m pip install -r requirements.txt -r requirements/dev.txt
 
       - name: Run the test suite with coverage
         run: python -m pytest --cov --cov-report=term-missing
