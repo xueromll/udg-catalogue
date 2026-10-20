@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Python](https://img.shields.io/badge/Python-3.11-blue.svg?style=flat-square)](https://www.python.org/)
-[![sci-etl-core](https://img.shields.io/badge/built_on-sci--etl--core_0.6-0b7285.svg?style=flat-square)](https://github.com/xueromll/sci-etl-core)
+[![sci-etl-core](https://img.shields.io/badge/built_on-sci--etl--core_0.7-0b7285.svg?style=flat-square)](https://github.com/xueromll/sci-etl-core)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.63-red.svg?style=flat-square)](https://streamlit.io/)
 [![DeepSeek](https://img.shields.io/badge/DeepSeek-V4_Flash-purple.svg?style=flat-square)](https://deepseek.com/)
 [![Coverage](https://img.shields.io/badge/coverage_(pipeline_code)-100%25-brightgreen.svg?style=flat-square)](#testing)
@@ -40,7 +40,7 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 - **Literature screening.** An LLM reads each title and abstract and excludes papers based purely on simulations or theory, such as IllustrisTNG, FIRE or EAGLE studies.
 - **Multi-format extraction.** The pipeline reads LaTeX sources first (tarballs or single gzipped files, assembled in document order), then PDFs including their tables, and uses the abstract only as a last resort.
 - **Structured LLM extraction.** DeepSeek V4-Flash runs in JSON mode, and every extracted galaxy must pass validation rules before it is stored. A rejected galaxy is logged and kept in a review store with the rule it broke.
-- **Paper provenance.** The raw catalogue has one row per galaxy per paper, tagged with the paper's arXiv id, and each galaxy in the sorted catalogue lists the papers it came from. A run manifest records the library version, model, prompts and papers behind the published catalogue.
+- **Paper provenance.** The raw catalogue has one row per galaxy per paper, tagged with the paper's arXiv id, and each galaxy in the sorted catalogue lists the papers it came from. A run manifest records the library and catalogue versions, model, prompts and papers behind the published catalogue.
 - **Astrometric cross-identification.** Galaxy names are normalised, and records within 3″ on the sky are merged using astropy, including exact duplicates and groups of three or more.
 - **Derived columns.** Each object gets a completeness score, a quality flag, its IAU constellation and a 3D spatial group from DBSCAN.
 - **Interactive exploration.** A Plotly 3D map and a Streamlit dashboard offer filtering, analytics and CSV export.
@@ -66,7 +66,7 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 | **Median record completeness** | 66.7% |
 | **Literature snapshot** | 2026-09-24 |
 | **Total API cost (five full runs)** | US$4.32 |
-| **ETL framework** | sci-etl-core 0.5 |
+| **ETL framework** | sci-etl-core 0.7 |
 
 ### Parameter coverage
 
@@ -202,6 +202,7 @@ udg-catalogue/
 │   ├── maps.py              # Plotly 3D map shared by main.py and the dashboard
 │   └── analytics.py         # Statistical figures shared by main.py and the dashboard
 ├── tests/                   # Offline test suite
+│   └── contract/            # sci-etl-core contract suites run against this repository's components
 ├── assets/                  # README screenshots
 ├── requirements.txt         # Runtime install with sci-etl-core from PyPI
 ├── requirements/
@@ -210,6 +211,7 @@ udg-catalogue/
 │   └── local.txt            # Runtime install against a local sci-etl-core checkout
 ├── Dockerfile               # Container setup
 ├── compose.yaml             # Docker Compose file
+├── CHANGELOG.md             # Release notes
 ├── LICENSE                  # MIT License
 └── README.md                # This file
 ```
@@ -219,7 +221,7 @@ udg-catalogue/
 | File | Committed | Contents |
 |---|---|---|
 | `data/udg_database_sorted.csv` | yes | Released catalogue |
-| `data/run_manifest.json` | yes | sci-etl-core version, model, base URL, prompt hashes, query, processed arXiv ids, and row counts and SHA-256 of both catalogues |
+| `data/run_manifest.json` | yes | sci-etl-core and catalogue versions, model, base URL, prompt hashes, query, processed arXiv ids, and row counts and SHA-256 of both catalogues |
 | `data/udg_database.csv` | no | Raw extractions, one row per galaxy per paper, input to post-processing |
 | `data/rejected_galaxies.db` | no | Rejected galaxies with their rule codes, for review |
 | `data/processed_arxiv_ids.txt`, `data/pipeline_meta.json` | no | Resumable pipeline state |
@@ -256,6 +258,7 @@ On Windows, activate with `.venv\Scripts\activate`. Then set `DEEPSEEK_API_KEY` 
 | `python main.py` | Reads arXiv from the newest submission until it reaches the papers the last run saw first, then continues from the offset saved in `pipeline_meta.json`, so new submissions are picked up without rescanning the whole listing. Papers already screened are skipped. Then rebuilds the sorted catalogue, analytics figures and 3D map. |
 | `python main.py --rescan` | Pages the whole listing from the newest submission, for example after arXiv reorders it |
 | `python main.py --index-papers` | Adds papers screened before the paper memory existed to the search index, without extracting galaxies (see [Paper Search](#paper-search)) |
+| `python main.py --reprocess 2601.00001v1 ...` | Forgets the given papers, then pages the whole listing from the newest submission so they are screened and extracted again, for example after a prompt or validation change. The log names the ids forgotten and any id that was never processed. A reprocessed paper's rows in `udg_database.csv` and its passages in the paper memory are replaced, and cached LLM answers are reused when the prompt and model are unchanged. With `--index-papers`, the ids are forgotten in the indexing state instead. |
 | `python main.py --skip-ingestion` | Rebuilds the outputs from an existing `udg_database.csv` without calling arXiv or DeepSeek |
 | `python main.py --replace-catalogue` | Writes the sorted catalogue even when `udg_database.csv` has fewer rows than the published catalogue has galaxies. Without it, such a raw catalogue is taken as incomplete, as in a fresh clone, and the published file is kept. |
 | `python main.py --config other.yaml` | Uses another configuration file; its paths are resolved relative to that file |
@@ -276,11 +279,16 @@ The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing, or `
 | `embeddings.chunk_words` / `embeddings.overlap_words` | `350` / `50` | Passage length and overlap, in words |
 | `search.graph.depth` / `search.graph.fanout` / `search.graph.max_nodes` | `2` / `8` / `80` | How far and how wide a discovery graph grows |
 | `search.graph.min_weight` | `0.35` | Weakest link kept in a discovery graph |
+| `search_index.cache_size_mb` / `search_index.mmap_size_mb` | `64` / `null` | Page cache and memory map of the SQLite text index; `null` keeps SQLite's default |
+| `prescreen.enabled` | `false` | Run the embedding prescreen before the DeepSeek relevance check (see below) |
+| `prescreen.threshold` / `prescreen.concepts` | `0.35` / three UDG observation concepts | Lowest cosine similarity to any concept that passes the prescreen |
 | `http.max_retries` / `http.backoff_factor` | `4` / `5.0` | Retry policy for arXiv requests |
 | `full_text.max_concurrency` | `4` | arXiv requests in flight at once, listing and full text together, however many papers `pipeline.max_concurrency` processes |
 | `deduplication.max_separation_arcsec` | `3.0` | Sky-matching radius |
 | `clustering.max_distance_mpc` | `5.0` | DBSCAN `eps` |
 | `clustering.min_samples` | `2` | DBSCAN `min_samples` |
+
+`prescreen.enabled` puts an embedding filter in front of the DeepSeek relevance check. Each listing's title and abstract is embedded with the configured embeddings provider and compared with `prescreen.concepts`; a paper below `prescreen.threshold` against every concept is judged not relevant without an LLM call and marked processed, like any other irrelevant paper, and a paper whose embedding fails goes to DeepSeek as before. It is off by default because it can reject a paper the model would have kept, which changes what the catalogue screens, and it requires `embeddings.enabled`. Cost effect: with the `local` provider the prescreen itself costs nothing, and every rejection saves one relevance call, the relevance prompt plus the title and abstract, a few hundred input tokens; with the `openai` provider every listing costs one embedding call instead, so the prescreen pays only when it rejects a large share of the listing. An active prescreen is logged as a warning at the start of the run.
 
 Every section rejects keys it does not declare, and the error names the key, so a typo fails at startup instead of being ignored. Configuration written for sci-etl-core 0.2 used `pipeline.max_records` and `pipeline.max_workers`; rename them `pipeline.total_limit` and `pipeline.max_concurrency`.
 
@@ -361,7 +369,7 @@ pip install -r requirements/local.txt
 python -c "import sci_etl_core; print(sci_etl_core.__file__)"
 ```
 
-The second command should print a path inside your sci-etl-core checkout. An editable install records its absolute path, so reinstall if you move the checkout. `requirements.txt` accepts sci-etl-core 0.6.0 or a later 0.6.x release; raise the range there to move to a newer minor release after running the tests against it.
+The second command should print a path inside your sci-etl-core checkout. An editable install records its absolute path, so reinstall if you move the checkout. `requirements.txt` accepts sci-etl-core 0.7.0 or a later 0.7.x release; raise the range there, and in `requirements/dev.txt`, to move to a newer minor release after running the tests against it.
 
 ---
 
@@ -423,10 +431,12 @@ The test suite runs offline. arXiv is replaced by an in-memory Atom feed and e-p
 
 ```bash
 pip install -r requirements/dev.txt
-pytest --cov
+pytest --cov -W error::DeprecationWarning
 ```
 
-Coverage of `udg_catalogue` and `main.py` must stay at 100%. `pyproject.toml` enforces this, and CI checks it on every push and pull request. The dashboard, `app.py`, is exercised by the `AppTest` tests but is not part of that measure, so the badge's 100% does not cover it.
+Coverage of `udg_catalogue` and `main.py` must stay at 100%. `pyproject.toml` enforces this, and CI checks it on every push and pull request, with every `DeprecationWarning` treated as an error so that a deprecation in sci-etl-core is noticed before the name is removed.
+
+`tests/contract/` runs sci-etl-core's contract suites, from `sci_etl_core.testing` in the `testing` extra that `requirements/dev.txt` installs, against this repository's own components: `ExtractorContract` against `LoggingExtractor` over the arXiv extractor, served by an in-memory listing, and `ExporterContract` against the raw-catalogue CSV exporter with galaxy rows. `DiscardingExporter` keeps nothing by design, so it cannot satisfy a contract that reads entities back, and the repository wraps no state manager or vector store of its own. The dashboard, `app.py`, is exercised by the `AppTest` tests but is not part of that measure, so the badge's 100% does not cover it.
 
 Beyond unit tests:
 
@@ -441,6 +451,12 @@ Beyond unit tests:
 * [ ] Add support for other astronomical catalogues (e.g., dSph, LSB galaxies)
 * [ ] Deploy Streamlit dashboard to Streamlit Cloud
 * [ ] Add automated weekly updates via GitHub Actions
+
+---
+
+## Changelog
+
+Releases and their changes are listed in [CHANGELOG.md](CHANGELOG.md). The version is `udg_catalogue.__version__` and is recorded in `data/run_manifest.json`.
 
 ---
 
