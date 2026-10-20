@@ -138,6 +138,10 @@ class PaperLibrary:
         return self._embedder is not None
 
     @property
+    def embedder(self) -> AsyncEmbedder | None:
+        return self._embedder
+
+    @property
     def closeables(self) -> list[Any]:
         return list(self._closeables)
 
@@ -188,10 +192,10 @@ class PaperLibrary:
         started = time.perf_counter()
         node = parse_query(query)
         lexical_node = None if mode == "semantic" else node
-        outcome, facet_counts, matched_ids = await asyncio.gather(
+        outcome, facet_counts, matched = await asyncio.gather(
             self.searcher().search(query, top_k, mode=mode, filters=filters),
             self._text_store.facet_counts(DISPLAY_FACET_KEYS, query=lexical_node, filters=filters),
-            self._matched_ids(lexical_node, filters),
+            self._count_matches(lexical_node, filters),
         )
         return DiscoveryResult(
             query_text=query,
@@ -199,16 +203,16 @@ class PaperLibrary:
             hits=tuple(outcome.hits),
             graph=None,
             facets=tuple(Facet(key, facet_counts[key]) for key in DISPLAY_FACET_KEYS),
-            total_matched=len(outcome.hits) if matched_ids is None else len(matched_ids),
+            total_matched=len(outcome.hits) if matched is None else matched,
             elapsed_ms=(time.perf_counter() - started) * 1000,
             degraded=outcome.degraded,
             skipped=outcome.skipped,
         )
 
-    async def _matched_ids(self, node: Node | None, filters: Sequence[SearchFilter]) -> frozenset[str] | None:
+    async def _count_matches(self, node: Node | None, filters: Sequence[SearchFilter]) -> int | None:
         if node is None:
             return None
-        return await self._text_store.filter_ids(node, filters)
+        return await self._text_store.count_matches(node, filters)
 
     def edge_sources(self) -> list[CachedEdgeSource]:
         if self._edge_sources is None:
@@ -251,6 +255,7 @@ def open_paper_library(config: CatalogueConfig, embedder: AsyncEmbedder | None =
         config.paths.search_index,
         facet_keys=PAPER_FACET_KEYS,
         weights=config.search.bm25.to_weights(),
+        tuning=config.search_index.to_tuning(),
     )
     closeables: list[Any] = [text_store]
     if not config.embeddings.enabled:

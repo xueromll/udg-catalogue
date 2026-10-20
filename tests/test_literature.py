@@ -13,10 +13,12 @@ from sci_etl_core.search import (
     MetadataEdgeSource,
     MetadataFilter,
     RangeFilter,
+    SqliteTuning,
+    parse_query,
 )
 
 from udg_catalogue import literature as literature_module
-from udg_catalogue.config import PAPER_FACET_KEYS, EmbeddingsConfig
+from udg_catalogue.config import PAPER_FACET_KEYS, EmbeddingsConfig, SearchIndexConfig
 from udg_catalogue.literature import (
     CachedEdgeSource,
     LibraryOverview,
@@ -69,6 +71,16 @@ class RecordingStore:
         self.closed = True
 
 
+class CountingTextStore(InMemoryTextSearchStore):
+    def __init__(self, **options):
+        super().__init__(**options)
+        self.counted = []
+
+    async def count_matches(self, query=None, filters=(), *, cap=None):
+        self.counted.append((query, tuple(filters), cap))
+        return await super().count_matches(query, filters, cap=cap)
+
+
 class CountingEdgeSource(AsyncEdgeSource):
     def __init__(self):
         self.requests = []
@@ -82,8 +94,8 @@ class CountingEdgeSource(AsyncEdgeSource):
         return {record_id: [(f"{record_id}-next", 0.5)] for record_id in record_ids}
 
 
-def build_library(semantic=True, **options):
-    text_store = InMemoryTextSearchStore(facet_keys=PAPER_FACET_KEYS)
+def build_library(semantic=True, text_store=None, **options):
+    text_store = text_store or InMemoryTextSearchStore(facet_keys=PAPER_FACET_KEYS)
     if not semantic:
         return PaperLibrary(text_store, **options)
     return PaperLibrary(text_store, embedder=HashingEmbedder(), vector_store=InMemoryEmbeddingStore(), **options)
@@ -139,6 +151,7 @@ def test_semantic_library_embeds_chunks_and_indexes_text():
     library = build_library()
 
     assert library.semantic
+    assert isinstance(library.embedder, HashingEmbedder)
     assert isinstance(library.memory_ingestor(build_chunker(EmbeddingsConfig())), AsyncCompositeIngestor)
     assert len(library.usage_sources) == 1
     filled(library)
@@ -150,6 +163,7 @@ def test_lexical_library_only_indexes_text():
     library = build_library(semantic=False)
 
     assert not library.semantic
+    assert library.embedder is None
     assert library.usage_sources == []
     assert isinstance(library.memory_ingestor(build_chunker(EmbeddingsConfig())), AsyncSearchIndexer)
     assert [type(source.source) for source in library.edge_sources()] == [MetadataEdgeSource]
@@ -179,6 +193,19 @@ def test_filters_narrow_hits_and_facets():
     assert {hit.record_id for hit in result.hits} == {"2601.00002", "2601.00003"}
     assert result.total_matched == 2
     assert dict(result.facets[1].counts) == {"2016": 1, "2018": 1, "2024": 1}
+
+
+def test_total_matched_is_counted_by_the_store_without_loading_ids():
+    store = CountingTextStore(facet_keys=PAPER_FACET_KEYS)
+    library = filled(build_library(text_store=store))
+    filters = paper_filters(years=(2017, 2030))
+
+    result = asyncio.run(library.search("galax*", mode="lexical", filters=filters))
+
+    assert result.total_matched == 2
+    assert store.counted == [(parse_query("galax*"), tuple(filters), None)]
+    asyncio.run(library.search("galaxies", mode="semantic"))
+    assert len(store.counted) == 1
 
 
 def test_semantic_search_counts_its_hits():
@@ -268,6 +295,29 @@ def test_open_paper_library_without_embeddings_opens_only_the_text_index(catalog
 
     assert not library.semantic
     assert library.closeables == [library.text_store]
+    asyncio.run(library.aclose())
+
+
+def test_open_paper_library_tunes_the_text_index_from_the_config(catalogue_config, monkeypatch):
+    options = {}
+
+    class RecordingStore(AsyncSqliteFts5Store):
+        def __init__(self, path, **settings):
+            options.update(settings)
+            super().__init__(path, **settings)
+
+    monkeypatch.setattr(literature_module, "AsyncSqliteFts5Store", RecordingStore)
+    config = catalogue_config.model_copy(
+        update={
+            "embeddings": EmbeddingsConfig(enabled=False),
+            "search_index": SearchIndexConfig(cache_size_mb=8, mmap_size_mb=16),
+        }
+    )
+
+    library = open_paper_library(config)
+
+    assert options["tuning"] == SqliteTuning(cache_size=8 * 1024 * 1024, mmap_size=16 * 1024 * 1024)
+    assert asyncio.run(filled(library).count()) == 3
     asyncio.run(library.aclose())
 
 
