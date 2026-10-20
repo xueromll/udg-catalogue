@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from sci_etl_core.claims import content_hash
 
+from udg_catalogue import __version__
 from udg_catalogue.manifest import MANIFEST_VERSION, build_manifest, write_manifest
 from udg_catalogue.prompts import EXTRACTION_PROMPT, RELEVANCE_PROMPT
 
@@ -37,7 +38,7 @@ def test_the_manifest_describes_the_catalogues_and_what_produced_them(catalogue_
     manifest = json.loads(destination.read_text(encoding="utf-8"))
     assert destination == paths.run_manifest
     assert manifest["software"]["sci-etl-core"]
-    assert manifest["software"]["udg-catalogue"] is None
+    assert manifest["software"]["udg-catalogue"] == __version__
     assert manifest["llm"] == {"base_url": catalogue_config.llm.base_url, "model": catalogue_config.llm.model}
     assert manifest["prompts"] == {
         "relevance_sha256": content_hash(RELEVANCE_PROMPT),
