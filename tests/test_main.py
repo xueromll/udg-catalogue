@@ -113,6 +113,54 @@ def test_index_papers_indexes_without_ingesting_or_rebuilding(project, monkeypat
     assert not (project / "data" / "udg_database_sorted.csv").exists()
 
 
+def test_reprocess_forgets_the_papers_then_rescans_from_the_first_page(project, monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "sk-test")
+    processed_ids = project / "data" / "processed_arxiv_ids.txt"
+    processed_ids.write_text("2401.00001\n2401.00002\n2401.00003\n", encoding="utf-8")
+    calls = []
+
+    async def record_ingestion(_config, _logger, start_index, _shutdown):
+        calls.append((start_index, set(processed_ids.read_text(encoding="utf-8").split())))
+        return 2
+
+    monkeypatch.setattr(entrypoint, "run_ingestion", record_ingestion)
+    monkeypatch.setattr(entrypoint, "run_paper_indexing", ingestion_must_not_run)
+
+    assert run_main(project, "--reprocess", "2401.00001", "2401.00003") == entrypoint.EXIT_OK
+
+    assert calls == [(0, {"2401.00002"})]
+    assert (project / "data" / "udg_database_sorted.csv").is_file()
+
+
+def test_reprocess_with_index_papers_forgets_in_the_indexing_state(project, monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV_VAR, "sk-test")
+    indexed_ids = project / "data" / "indexed_arxiv_ids.txt"
+    indexed_ids.write_text("2401.00001\n", encoding="utf-8")
+    processed_ids = project / "data" / "processed_arxiv_ids.txt"
+    processed_ids.write_text("2401.00001\n", encoding="utf-8")
+    calls = []
+
+    async def record_indexing(_config, _logger, start_index, _shutdown):
+        calls.append(start_index)
+        return 0
+
+    monkeypatch.setattr(entrypoint, "run_ingestion", ingestion_must_not_run)
+    monkeypatch.setattr(entrypoint, "run_paper_indexing", record_indexing)
+
+    assert run_main(project, "--index-papers", "--reprocess", "2401.00001") == entrypoint.EXIT_OK
+
+    assert calls == [0]
+    assert indexed_ids.read_text(encoding="utf-8").split() == []
+    assert processed_ids.read_text(encoding="utf-8").split() == ["2401.00001"]
+
+
+def test_reprocess_needs_an_ingestion_run(project, capsys):
+    with pytest.raises(SystemExit):
+        run_main(project, "--reprocess", "2401.00001", "--skip-ingestion")
+
+    assert "--reprocess needs an ingestion run" in capsys.readouterr().err
+
+
 def test_index_papers_and_skip_ingestion_are_exclusive(project):
     with pytest.raises(SystemExit):
         run_main(project, "--index-papers", "--skip-ingestion")

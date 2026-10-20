@@ -27,7 +27,7 @@ from udg_catalogue.config import (
 from udg_catalogue.logs import configure_run_logging
 from udg_catalogue.manifest import write_manifest
 from udg_catalogue.maps import write_3d_map
-from udg_catalogue.pipeline import run_ingestion, run_paper_indexing
+from udg_catalogue.pipeline import forget_papers, run_ingestion, run_paper_indexing
 from udg_catalogue.postprocess import build_sorted_catalogue
 
 EXIT_OK = 0
@@ -59,6 +59,17 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "as after a rebuild from scratch."
         ),
     )
+    parser.add_argument(
+        "--reprocess",
+        nargs="+",
+        metavar="ARXIV_ID",
+        default=(),
+        help=(
+            "Forget these arXiv ids so the run extracts them again, after a prompt or validation change, "
+            "and page the whole listing from the newest submission as --rescan does. "
+            "With --index-papers, the ids are forgotten in the indexing state instead."
+        ),
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--skip-ingestion",
@@ -70,7 +81,10 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Index relevant papers missing from the paper search index, without extracting galaxies.",
     )
-    return parser.parse_args(argv)
+    arguments = parser.parse_args(argv)
+    if arguments.reprocess and arguments.skip_ingestion:
+        parser.error("--reprocess needs an ingestion run; drop --skip-ingestion")
+    return arguments
 
 
 def run_stage(stage: Stage, config: CatalogueConfig, log: logging.Logger, start_index: int | None) -> int:
@@ -110,8 +124,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "set the key or use the local provider"
             )
             return EXIT_MISSING_API_KEY
+        if arguments.reprocess:
+            asyncio.run(forget_papers(config, log, arguments.reprocess, indexing=arguments.index_papers))
         stage = run_paper_indexing if arguments.index_papers else run_ingestion
-        exit_code = run_stage(stage, config, log, 0 if arguments.rescan else None)
+        start_index = 0 if arguments.rescan or arguments.reprocess else None
+        exit_code = run_stage(stage, config, log, start_index)
         if arguments.index_papers or exit_code == EXIT_INTERRUPTED:
             return exit_code
 
