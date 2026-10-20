@@ -1,7 +1,9 @@
 import warnings
 
 import pytest
+from pydantic import ValidationError
 from sci_etl_core import ConfigurationError
+from sci_etl_core.search import SqliteTuning
 
 from udg_catalogue.config import (
     API_KEY_ENV_VAR,
@@ -10,9 +12,14 @@ from udg_catalogue.config import (
     PROJECT_ROOT,
     CatalogueConfig,
     EmbeddingsConfig,
+    PrescreenConfig,
+    SearchIndexConfig,
     embedding_key_missing,
     load_catalogue_config,
 )
+from udg_catalogue.prompts import PRESCREEN_CONCEPTS
+
+MEBIBYTE = 1024 * 1024
 
 
 def test_repository_config_loads_with_project_relative_paths(monkeypatch):
@@ -27,6 +34,8 @@ def test_repository_config_loads_with_project_relative_paths(monkeypatch):
     assert config.pipeline.max_concurrency == 6
     assert config.pipeline.newest_first
     assert config.embeddings.provider == "local"
+    assert config.search_index == SearchIndexConfig(cache_size_mb=64, mmap_size_mb=None)
+    assert config.prescreen == PrescreenConfig(enabled=False, threshold=0.35)
     assert config.paths.raw_catalogue == PROJECT_ROOT / "data" / "udg_database.csv"
     assert config.paths.processed_ids == PROJECT_ROOT / "data" / "processed_arxiv_ids.txt"
     assert config.paths.search_index == PROJECT_ROOT / "data" / "paper_index.db"
@@ -111,6 +120,8 @@ def test_chunk_overlap_must_be_shorter_than_the_chunk(tmp_path):
         ("deduplication:\n  max_separation: 2.0\n", "deduplication.max_separation"),
         ("pipeline:\n  max_records: 10\n", "pipeline.max_records"),
         ("clustring:\n  min_samples: 3\n", "clustring"),
+        ("search_index:\n  cache_mb: 8\n", "search_index.cache_mb"),
+        ("prescreen:\n  enable: true\n", "prescreen.enable"),
     ],
 )
 def test_an_unknown_key_fails_validation_and_is_named(tmp_path, yaml_text, key):
@@ -124,6 +135,56 @@ def test_an_unknown_key_fails_validation_and_is_named(tmp_path, yaml_text, key):
 def test_missing_config_file_raises_configuration_error(tmp_path):
     with pytest.raises(ConfigurationError):
         load_catalogue_config(tmp_path / "missing.yaml")
+
+
+@pytest.mark.parametrize(
+    ("settings", "tuning"),
+    [
+        ({}, SqliteTuning(cache_size=64 * MEBIBYTE, mmap_size=None)),
+        ({"cache_size_mb": None, "mmap_size_mb": 0}, SqliteTuning(cache_size=None, mmap_size=0)),
+        ({"cache_size_mb": 8, "mmap_size_mb": 256}, SqliteTuning(cache_size=8 * MEBIBYTE, mmap_size=256 * MEBIBYTE)),
+    ],
+)
+def test_search_index_settings_become_sqlite_tuning_in_bytes(settings, tuning):
+    assert SearchIndexConfig(**settings).to_tuning() == tuning
+
+
+def test_search_index_sizes_must_not_be_negative():
+    with pytest.raises(ValidationError, match="cache_size_mb"):
+        SearchIndexConfig(cache_size_mb=-1)
+
+
+def test_prescreen_is_off_by_default_and_screens_against_the_catalogue_concepts():
+    prescreen = CatalogueConfig().prescreen
+
+    assert not prescreen.enabled
+    assert prescreen.threshold == 0.35
+    assert prescreen.concepts == list(PRESCREEN_CONCEPTS)
+
+
+def test_prescreen_needs_at_least_one_concept():
+    with pytest.raises(ValidationError, match="concepts"):
+        PrescreenConfig(concepts=[])
+
+
+def test_prescreen_requires_embeddings(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("embeddings:\n  enabled: false\nprescreen:\n  enabled: true\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="prescreen.enabled requires embeddings.enabled"):
+        load_catalogue_config(config_path)
+
+
+def test_prescreen_loads_with_embeddings_enabled(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "prescreen:\n  enabled: true\n  threshold: 0.5\n  concepts:\n    - observed ultra-diffuse galaxies\n",
+        encoding="utf-8",
+    )
+
+    prescreen = load_catalogue_config(config_path).prescreen
+
+    assert prescreen == PrescreenConfig(enabled=True, threshold=0.5, concepts=["observed ultra-diffuse galaxies"])
 
 
 def test_defaults_match_previous_pipeline_settings():

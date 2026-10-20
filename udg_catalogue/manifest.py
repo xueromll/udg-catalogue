@@ -6,12 +6,13 @@ import hashlib
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
 from sci_etl_core.claims import content_hash
 
+from udg_catalogue import __version__
 from udg_catalogue.config import CatalogueConfig
 from udg_catalogue.prompts import EXTRACTION_PROMPT, RELEVANCE_PROMPT
 
@@ -45,13 +46,6 @@ def count_rows(path: Path) -> int:
     return len(pd.read_csv(path, dtype=str, keep_default_na=False))
 
 
-def _installed(distribution: str) -> str | None:
-    try:
-        return version(distribution)
-    except PackageNotFoundError:
-        return None
-
-
 def build_manifest(config: CatalogueConfig, now: Callable[[], datetime] | None = None) -> dict[str, Any]:
     """Describe the catalogue files on disk and everything that produced them."""
     paths = config.paths
@@ -60,8 +54,8 @@ def build_manifest(config: CatalogueConfig, now: Callable[[], datetime] | None =
         "manifest_version": MANIFEST_VERSION,
         "built_at": clock().isoformat(),
         "software": {
-            "sci-etl-core": _installed("sci-etl-core"),
-            "udg-catalogue": _installed("udg-catalogue"),
+            "sci-etl-core": version("sci-etl-core"),
+            "udg-catalogue": __version__,
         },
         "llm": {"base_url": config.llm.base_url, "model": config.llm.model},
         "prompts": {

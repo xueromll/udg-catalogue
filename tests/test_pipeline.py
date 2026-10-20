@@ -8,17 +8,27 @@ import pandas as pd
 import pytest
 from fakes import HashingEmbedder
 from pydantic import SecretStr
-from sci_etl_core import AsyncArxivExtractor, AsyncLLMClient, PipelineInterrupted, ShutdownSignal
+from sci_etl_core import (
+    AsyncArxivExtractor,
+    AsyncCascadingRelevanceFilter,
+    AsyncLLMClient,
+    AsyncLLMRelevanceFilter,
+    PipelineInterrupted,
+    ShutdownSignal,
+)
 from sci_etl_core.claims import AsyncSqliteRejectionStore
 from sci_etl_core.config import PipelineConfig
-from sci_etl_core.embeddings import AsyncSqliteEmbeddingStore
-from sci_etl_core.search import AsyncSqliteFts5Store
+from sci_etl_core.embeddings import AsyncSqliteEmbeddingStore, InMemoryEmbeddingStore
+from sci_etl_core.search import AsyncSqliteFts5Store, InMemoryTextSearchStore
 
 from udg_catalogue import literature as literature_module
 from udg_catalogue import pipeline as pipeline_module
-from udg_catalogue.config import PAPER_FACET_KEYS
+from udg_catalogue.config import PAPER_FACET_KEYS, PrescreenConfig
+from udg_catalogue.literature import PaperLibrary
 from udg_catalogue.pipeline import (
     EXTRACTION_RESULT_KEY,
+    build_relevance_filter,
+    forget_papers,
     run_arguments,
     run_ingestion,
     run_paper_indexing,
@@ -149,6 +159,18 @@ async def unresolved_rejections(config):
 
 def extraction_calls(llm):
     return [content for prompt, content in llm.calls if prompt == EXTRACTION_PROMPT]
+
+
+def relevance_calls(llm):
+    return [content for prompt, content in llm.calls if prompt == RELEVANCE_PROMPT]
+
+
+def with_prescreen(config, **settings):
+    return config.model_copy(update={"prescreen": PrescreenConfig(enabled=True, **settings)})
+
+
+def state_ids(path):
+    return set(path.read_text(encoding="utf-8").split()) if path.is_file() else set()
 
 
 def test_ingestion_exports_galaxies_and_remembers_each_relevant_paper(ingestion_config, monkeypatch, caplog):
@@ -288,6 +310,103 @@ def test_paper_indexing_skips_indexed_papers_and_reuses_cached_answers(ingestion
         OBSERVATIONAL_ID,
         SIMULATED_ID,
     }
+
+
+def test_prescreen_rejects_papers_unlike_the_concepts_without_asking_the_llm(ingestion_config, monkeypatch, caplog):
+    arxiv = FakeArxiv()
+    llm = ScriptedLLMClient()
+    install_fakes(monkeypatch, arxiv, llm)
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    config = with_prescreen(ingestion_config, threshold=0.5, concepts=["imaging of an ultra-diffuse galaxy"])
+
+    processed = asyncio.run(run_ingestion(config, logging.getLogger(LOGGER_NAME)))
+
+    assert processed == 1
+    assert len(relevance_calls(llm)) == 1
+    assert "Dragonfly 44 revisited" in relevance_calls(llm)[0]
+    assert len(extraction_calls(llm)) == 1
+    assert state_ids(config.paths.processed_ids) == {OBSERVATIONAL_ID, SIMULATED_ID}
+    assert caplog.messages == [
+        "Embedding prescreen on: a paper whose title and abstract score below 0.50 against all 1 concepts "
+        "is judged not relevant without an LLM call"
+    ]
+
+
+def test_relevance_filter_is_the_llm_alone_unless_the_prescreen_is_on(catalogue_config):
+    llm = ScriptedLLMClient()
+    library = PaperLibrary(InMemoryTextSearchStore(facet_keys=PAPER_FACET_KEYS))
+    logger = logging.getLogger(LOGGER_NAME)
+
+    assert isinstance(build_relevance_filter(catalogue_config, llm, library, logger), AsyncLLMRelevanceFilter)
+    semantic = PaperLibrary(
+        InMemoryTextSearchStore(facet_keys=PAPER_FACET_KEYS),
+        embedder=HashingEmbedder(),
+        vector_store=InMemoryEmbeddingStore(),
+    )
+    cascade = build_relevance_filter(with_prescreen(catalogue_config), llm, semantic, logger)
+    assert isinstance(cascade, AsyncCascadingRelevanceFilter)
+    with pytest.raises(ValueError, match="needs the paper library's embedder"):
+        build_relevance_filter(with_prescreen(catalogue_config), llm, library, logger)
+
+
+def test_forget_papers_clears_processed_marks_and_names_ids_it_never_saw(ingestion_config, caplog):
+    paths = ingestion_config.paths
+    paths.processed_ids.write_text("2601.00001v1\n2601.00002v1\n2601.00003v1\n", encoding="utf-8")
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    forgotten = asyncio.run(
+        forget_papers(
+            ingestion_config,
+            logging.getLogger(LOGGER_NAME),
+            ["2601.00002v1", " 2601.00001v1 ", "2699.99999v9", "2601.00002v1", ""],
+        )
+    )
+
+    assert forgotten == ["2601.00002v1", "2601.00001v1"]
+    assert state_ids(paths.processed_ids) == {"2601.00003v1"}
+    assert caplog.messages == [
+        "Never processed, so nothing to forget: 2699.99999v9",
+        f"Forgot 2 of 3 processed papers in {paths.processed_ids}: 2601.00002v1, 2601.00001v1; "
+        "the next run processes them again",
+    ]
+
+
+def test_forget_papers_targets_the_indexing_state_when_indexing(ingestion_config, caplog):
+    paths = ingestion_config.paths
+    paths.indexed_ids.write_text("2601.00001v1\n", encoding="utf-8")
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    forgotten = asyncio.run(
+        forget_papers(ingestion_config, logging.getLogger(LOGGER_NAME), ["2601.00005v1"], indexing=True)
+    )
+
+    assert forgotten == []
+    assert state_ids(paths.indexed_ids) == {"2601.00001v1"}
+    assert not paths.processed_ids.exists()
+    assert caplog.messages == [
+        "Never processed, so nothing to forget: 2601.00005v1",
+        f"Forgot 0 of 1 processed papers in {paths.indexed_ids}: none; the next run processes them again",
+    ]
+
+
+def test_a_forgotten_paper_is_extracted_again_by_a_rescan_from_cached_answers(ingestion_config, monkeypatch):
+    arxiv = FakeArxiv()
+    llm = ScriptedLLMClient()
+    install_fakes(monkeypatch, arxiv, llm)
+    config = without_embeddings(ingestion_config)
+    logger = logging.getLogger(LOGGER_NAME)
+    asyncio.run(run_ingestion(config, logger))
+    calls_after_first_run = len(llm.calls)
+
+    asyncio.run(forget_papers(config, logger, [OBSERVATIONAL_ID]))
+    processed = asyncio.run(run_ingestion(config, logger, start_index=0))
+
+    assert processed == 1
+    assert arxiv.eprint_requests == 2
+    assert len(llm.calls) == calls_after_first_run
+    raw = pd.read_csv(config.paths.raw_catalogue, dtype={"record_id": str})
+    assert raw["record_id"].tolist() == [OBSERVATIONAL_ID]
+    assert state_ids(config.paths.processed_ids) == {OBSERVATIONAL_ID, SIMULATED_ID}
 
 
 def test_shutdown_request_stops_the_run_before_any_paper(ingestion_config, monkeypatch):

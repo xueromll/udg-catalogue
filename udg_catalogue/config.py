@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from sci_etl_core.config import BaseAppConfig, load_config
+
+from udg_catalogue.prompts import PRESCREEN_CONCEPTS
+
+if TYPE_CHECKING:
+    from sci_etl_core.search import SqliteTuning
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
@@ -76,6 +81,46 @@ class EmbeddingsConfig(BaseModel):
         return self
 
 
+class SearchIndexConfig(BaseModel):
+    """Memory given to the SQLite text index, as :class:`~sci_etl_core.search.SqliteTuning`.
+
+    ``cache_size_mb`` is the page cache, ``mmap_size_mb`` the most of the index
+    file read through a memory map. ``null`` keeps SQLite's default for that
+    setting: a page cache of about 2 MB, and no memory map.
+    """
+
+    model_config = _STRICT
+
+    cache_size_mb: int | None = Field(default=64, ge=0)
+    mmap_size_mb: int | None = Field(default=None, ge=0)
+
+    def to_tuning(self) -> SqliteTuning:
+        from sci_etl_core.search import SqliteTuning
+
+        return SqliteTuning(cache_size=_megabytes(self.cache_size_mb), mmap_size=_megabytes(self.mmap_size_mb))
+
+
+def _megabytes(size: int | None) -> int | None:
+    return None if size is None else size * 1024 * 1024
+
+
+class PrescreenConfig(BaseModel):
+    """An embedding filter run before the DeepSeek relevance check.
+
+    When ``enabled``, a listing whose title and abstract score below
+    ``threshold`` in cosine similarity against every one of ``concepts`` is
+    judged not relevant without an LLM call. It is off by default because it
+    can reject a paper the model would keep, which changes what the catalogue
+    screens, and it needs ``embeddings.enabled``.
+    """
+
+    model_config = _STRICT
+
+    enabled: bool = False
+    threshold: float = Field(default=0.35, ge=-1.0, le=1.0, allow_inf_nan=False)
+    concepts: list[str] = Field(default_factory=lambda: list(PRESCREEN_CONCEPTS), min_length=1)
+
+
 class ClusteringConfig(BaseModel):
     model_config = _STRICT
 
@@ -96,8 +141,16 @@ class CatalogueConfig(BaseAppConfig):
 
     paths: PathsConfig = Field(default_factory=PathsConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
+    search_index: SearchIndexConfig = Field(default_factory=SearchIndexConfig)
+    prescreen: PrescreenConfig = Field(default_factory=PrescreenConfig)
     clustering: ClusteringConfig = Field(default_factory=ClusteringConfig)
     deduplication: DeduplicationConfig = Field(default_factory=DeduplicationConfig)
+
+    @model_validator(mode="after")
+    def _prescreen_needs_embeddings(self) -> CatalogueConfig:
+        if self.prescreen.enabled and not self.embeddings.enabled:
+            raise ValueError("prescreen.enabled requires embeddings.enabled")
+        return self
 
 
 def embedding_key_missing(config: CatalogueConfig) -> bool:

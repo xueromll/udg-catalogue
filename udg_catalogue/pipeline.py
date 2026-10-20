@@ -7,7 +7,9 @@ from typing import Any
 import httpx
 from sci_etl_core import (
     AsyncArxivExtractor,
+    AsyncCascadingRelevanceFilter,
     AsyncCsvExporter,
+    AsyncEmbeddingRelevanceFilter,
     AsyncEntityExtractor,
     AsyncETLPipeline,
     AsyncExporter,
@@ -90,6 +92,83 @@ def build_entity_extractor(
     )
 
 
+def build_relevance_filter(
+    config: CatalogueConfig,
+    llm_client: AsyncLLMClient,
+    library: PaperLibrary,
+    logger: logging.Logger,
+) -> AsyncRelevanceFilter:
+    """Judge relevance with the LLM, after the embedding prescreen when ``prescreen.enabled`` is set.
+
+    The prescreen embeds a listing's title and abstract with the paper
+    library's embedder and rejects it, without an LLM call, when its cosine
+    similarity to every ``prescreen.concepts`` entry is below
+    ``prescreen.threshold``. A failed embedding lets the paper through to the
+    LLM. An active prescreen is logged as a warning, since it changes what the
+    run screens and what it costs.
+
+    Raises:
+        ValueError: The prescreen is enabled but ``library`` has no embedder.
+    """
+    judge: AsyncRelevanceFilter = AsyncLLMRelevanceFilter(llm_client=llm_client, system_prompt=RELEVANCE_PROMPT)
+    prescreen = config.prescreen
+    if not prescreen.enabled:
+        return judge
+    if library.embedder is None:
+        raise ValueError("prescreen.enabled needs the paper library's embedder; set embeddings.enabled")
+    logger.warning(
+        f"Embedding prescreen on: a paper whose title and abstract score below {prescreen.threshold:.2f} "
+        f"against all {len(prescreen.concepts)} concepts is judged not relevant without an LLM call"
+    )
+    return AsyncCascadingRelevanceFilter(
+        AsyncEmbeddingRelevanceFilter(library.embedder, prescreen.concepts, threshold=prescreen.threshold),
+        judge,
+    )
+
+
+def build_state_manager(config: CatalogueConfig, *, indexing: bool = False) -> AsyncFileStateManager:
+    """The processed-paper files of the ingestion run, or of the paper-indexing run with ``indexing``."""
+    paths = config.paths
+    if indexing:
+        return AsyncFileStateManager(paths.indexed_ids, paths.indexing_metadata)
+    return AsyncFileStateManager(paths.processed_ids, paths.pipeline_metadata)
+
+
+async def forget_papers(
+    config: CatalogueConfig,
+    logger: logging.Logger,
+    record_ids: Sequence[str],
+    *,
+    indexing: bool = False,
+) -> list[str]:
+    """Clear the processed mark of each paper in ``record_ids`` and return the ids that had one.
+
+    Call it between runs, and give the run that follows ``start_index=0``, so
+    the listing is paged from its first entry and reaches the forgotten papers
+    again, as the ``Forgetting`` protocol asks. Ids that were never processed
+    are reported as a warning and left as they are, apart from any failed
+    attempts they carry, which are cleared too.
+
+    Raises:
+        OSError: A state file cannot be read or written.
+        StateStoreError: The metadata file was written by a newer sci-etl-core.
+    """
+    wanted = list(dict.fromkeys(record_id.strip() for record_id in record_ids if record_id.strip()))
+    state_manager = build_state_manager(config, indexing=indexing)
+    processed = await state_manager.load_processed_ids()
+    forgotten = [record_id for record_id in wanted if record_id in processed]
+    unknown = [record_id for record_id in wanted if record_id not in processed]
+    await state_manager.forget(wanted)
+    if unknown:
+        logger.warning(f"Never processed, so nothing to forget: {', '.join(unknown)}")
+    state_file = config.paths.indexed_ids if indexing else config.paths.processed_ids
+    logger.info(
+        f"Forgot {len(forgotten)} of {len(processed)} processed papers in {state_file}: "
+        f"{', '.join(forgotten) or 'none'}; the next run processes them again"
+    )
+    return forgotten
+
+
 def _assemble(
     config: CatalogueConfig,
     logger: logging.Logger,
@@ -102,9 +181,7 @@ def _assemble(
 ) -> AsyncETLPipeline[Any]:
     cache = AsyncSqliteLLMResponseCache(config.paths.llm_cache)
     cached_llm = CachingLLMClient(llm_client, cache, model=config.llm.model)
-    relevance_filter: AsyncRelevanceFilter = AsyncLLMRelevanceFilter(
-        llm_client=cached_llm, system_prompt=RELEVANCE_PROMPT
-    )
+    relevance_filter = build_relevance_filter(config, cached_llm, library, logger)
     entity_extractor: AsyncEntityExtractor[dict[str, Any]]
     exporter: AsyncExporter[Any]
     closeables: list[Any] = [http_client, llm_client, cache, *library.closeables]
@@ -112,13 +189,11 @@ def _assemble(
         relevance_filter = UnindexedRelevanceFilter(relevance_filter, library.text_store)
         entity_extractor = NoEntityExtractor()
         exporter = DiscardingExporter()
-        state_manager = AsyncFileStateManager(config.paths.indexed_ids, config.paths.indexing_metadata)
     else:
         rejections = AsyncSqliteRejectionStore(config.paths.rejections)
         closeables.append(rejections)
         entity_extractor = build_entity_extractor(config, cached_llm, rejections)
         exporter = build_catalogue_exporter(config)
-        state_manager = AsyncFileStateManager(config.paths.processed_ids, config.paths.pipeline_metadata)
     extractor = AsyncArxivExtractor.from_config(
         config.http,
         config.pipeline,
@@ -133,7 +208,7 @@ def _assemble(
         relevance_filter=LoggingRelevanceFilter(relevance_filter, logger.info),
         entity_extractor=entity_extractor,
         exporter=exporter,
-        state_manager=state_manager,
+        state_manager=build_state_manager(config, indexing=indexing),
         closeables=closeables,
         memory_ingestor=library.memory_ingestor(build_chunker(config.embeddings)),
         shutdown=shutdown,
