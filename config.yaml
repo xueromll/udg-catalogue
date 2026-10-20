@@ -44,6 +44,14 @@ embeddings:
   chunk_words: 350
   overlap_words: 50
 
+search_index:
+  cache_size_mb: 64
+  mmap_size_mb: null
+
+prescreen:
+  enabled: false
+  threshold: 0.35
+
 search:
   graph:
     depth: 2

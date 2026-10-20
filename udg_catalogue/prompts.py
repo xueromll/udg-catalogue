@@ -34,3 +34,9 @@ Determine strictly if the paper relies exclusively on simulated, synthetic, mock
 If the paper presents REAL OBSERVATIONAL measurements from telescopes for Ultra-Diffuse Galaxies, return {"relevant": true}.
 If it is purely a simulation, theoretical work, or mock catalog without new observational UDG data, return {"relevant": false}.
 Return ONLY a JSON object: {"relevant": true} or {"relevant": false}."""
+
+PRESCREEN_CONCEPTS: tuple[str, ...] = (
+    "Telescope observations of ultra-diffuse galaxies: deep imaging, photometry, spectroscopy and kinematics",
+    "Measured properties of an ultra-diffuse galaxy: distance, effective radius, stellar mass and dark matter fraction",
+    "Low surface brightness galaxies and UDG candidates detected in imaging surveys of galaxy clusters and groups",
+)
