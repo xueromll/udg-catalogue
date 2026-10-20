@@ -30,10 +30,10 @@ codeFont = "JetBrains Mono, IBM Plex Mono, SFMono-Regular, Menlo, Consolas, mono
 codeFontSize = "12px"
 headingFontSizes = ["20px", "16px", "14px", "14px", "14px", "14px"]
 headingFontWeights = [600, 600, 600, 600, 600, 600]
-# A lightness ramp of the ink colour, never a rainbow: the six community steps,
-# and the same ramp interpolated to the ten values Streamlit requires here.
-chartCategoricalColors = ["#263140", "#334155", "#43566F", "#566E90", "#7088A9", "#90A2BC"]
-chartSequentialColors = ["#90A2BC", "#7E93B1", "#6D85A6", "#5F7798", "#526989", "#475B76", "#3E4F66", "#354358", "#2D3A4C", "#263140"]
+# Data colours, mirrored from udg_catalogue/ui/tokens.py: the Okabe-Ito order for
+# identity and ten Viridis steps for a measure.
+chartCategoricalColors = ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9"]
+chartSequentialColors = ["#440154", "#482878", "#3E4A89", "#31688E", "#26828E", "#1F9E89", "#35B779", "#6DCD59", "#B4DE2C", "#FDE725"]
 
 [theme.sidebar]
 backgroundColor = "#F4F5F7"

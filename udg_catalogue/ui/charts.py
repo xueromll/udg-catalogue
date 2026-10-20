@@ -1,9 +1,11 @@
-"""The catalogue charts in the slate system: the restyled 3D map and the analytics as single-hue Plotly figures.
+"""The catalogue charts in the slate system: the restyled 3D map and the analytics as Plotly figures.
 
 ``maps.py`` and ``analytics.py`` keep producing the report figures ``main.py``
 writes; the dashboard restyles the map it gets from ``maps.py`` and draws the
-analytics itself so one chart library, one palette and one type scale cover the
-whole app.
+analytics itself so one chart library and one type scale cover the whole app.
+Chrome follows the slate tokens; data colours follow ``tokens.CATEGORICAL``
+for identity and ``tokens.SEQUENTIAL`` for measures, so groups stay apart and
+a measure reads at a glance.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import plotly.graph_objects as go
 
 from udg_catalogue.config import KEY_COLUMN
 from udg_catalogue.maps import cluster_label
-from udg_catalogue.ui.tokens import ACCENT, CANVAS, COMMUNITY_RAMP, FONT_MONO, INK, MUTED, SEPARATOR, TYPE_12, ink_scale, plotly_layout
+from udg_catalogue.ui.tokens import ACCENT, CANVAS, CATEGORICAL, FONT_MONO, INK, MUTED, SEPARATOR, TYPE_12, measure_scale, plotly_layout
 
 MASS_COLUMN = "stellar_mass_solar"
 RADIUS_COLUMN = "effective_radius_kpc"
@@ -26,11 +28,31 @@ RADIUS_LABEL = "R_eff [kpc]"
 UNCLUSTERED = cluster_label(-1)
 HISTOGRAM_BINS = 30
 CHART_HEIGHT = 360
+SCATTER_HEIGHT = 460
+WALL = "#EDEFF2"
+OTHER = "#C4CAD3"  # clusters beyond the palette: lighter than the unclustered grey, named on hover only
+NO_VALUE = "no value"
+_POINT_FIELDS = ("x", "y", "z", "text", "hovertext", "ids", "customdata")
 AXIS: dict[str, Any] = {
     "gridcolor": SEPARATOR,
     "linecolor": INK,
     "linewidth": 1,
+    "showline": True,
     "zeroline": False,
+    "ticks": "outside",
+    "ticklen": 4,
+    "tickcolor": INK,
+    "tickfont": {"family": FONT_MONO, "size": TYPE_12, "color": INK},
+    "automargin": True,
+    "title": {"font": {"size": TYPE_12, "color": INK}, "standoff": 8},
+    "exponentformat": "power",
+}
+SCENE_AXIS: dict[str, Any] = {
+    "gridcolor": SEPARATOR,
+    "zerolinecolor": SEPARATOR,
+    "backgroundcolor": WALL,
+    "showbackground": True,
+    "linecolor": MUTED,
     "tickfont": {"family": FONT_MONO, "size": TYPE_12, "color": INK},
     "title": {"font": {"size": TYPE_12, "color": INK}},
 }
@@ -44,8 +66,8 @@ COLORBAR: dict[str, Any] = {
 
 
 def slate(figure: go.Figure, height: int | None = None) -> go.Figure:
-    """Apply the base layout, the ink colour scale and the mono ticks to any Plotly figure, and drop its title."""
-    layout: dict[str, Any] = plotly_layout(coloraxis={"colorscale": ink_scale(), "colorbar": COLORBAR})
+    """Apply the base layout, the measure colour scale and the mono ticks to any Plotly figure, and drop its title."""
+    layout: dict[str, Any] = plotly_layout(coloraxis={"colorscale": measure_scale(), "colorbar": COLORBAR})
     if height is not None:
         layout["height"] = height
     figure.update_layout(layout)
@@ -54,25 +76,61 @@ def slate(figure: go.Figure, height: int | None = None) -> go.Figure:
     return figure
 
 
+def split_missing(trace: go.Scatter3d) -> go.Scatter3d | None:
+    """Move the points whose measure is missing out of ``trace`` into a grey ``no value`` trace, or ``None`` if none is.
+
+    A missing measure must not be drawn as the lowest value of the scale: on a
+    dark-matter fraction map most galaxies have no fraction at all.
+    """
+    colour = np.asarray(trace.marker.color, dtype=float)
+    missing = np.isnan(colour)
+    if not missing.any():
+        return None
+    payload = trace.to_plotly_json()
+    payload.pop("type", None)
+    grey = go.Scatter3d(payload)
+    keep = ~missing
+    for field in _POINT_FIELDS:
+        values = getattr(trace, field)
+        if values is not None:
+            setattr(grey, field, np.asarray(values)[missing])
+            setattr(trace, field, np.asarray(values)[keep])
+    if trace.marker.size is not None and np.ndim(trace.marker.size) == 1:
+        grey.marker.size = np.asarray(trace.marker.size)[missing]
+        trace.marker.size = np.asarray(trace.marker.size)[keep]
+    trace.marker.color = colour[keep]
+    grey.marker.update(color=MUTED, coloraxis=None, colorscale=None, showscale=False)
+    grey.update(name=NO_VALUE, legendgroup=NO_VALUE, showlegend=True)
+    return grey
+
+
 def restyle_map(figure: go.Figure) -> go.Figure:
-    """The 3D map on the canvas ground: a single-hue scale for a measure, ramp steps per cluster, grey for the unclustered."""
+    """The 3D map on the canvas ground: Viridis for a measure, with galaxies that lack it in grey; by cluster, one hue
+    each for the six largest clusters, grey for the unclustered and a lighter grey, off the legend, for every smaller
+    cluster (hover still names it)."""
     slate(figure)
     figure.update_layout(
-        scene={
-            axis: {"gridcolor": SEPARATOR, "backgroundcolor": CANVAS, "zerolinecolor": SEPARATOR, "showbackground": True}
-            for axis in ("xaxis", "yaxis", "zaxis")
-        },
+        scene={"bgcolor": CANVAS, **{axis: dict(SCENE_AXIS) for axis in ("xaxis", "yaxis", "zaxis")}},
         legend={"itemsizing": "constant"},
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
     )
-    step = 0
+    discrete = [trace for trace in figure.data if isinstance(trace.marker.color, str)]
+    for trace in list(figure.data):
+        if trace not in discrete and (grey := split_missing(trace)) is not None:
+            figure.add_trace(grey)
     for trace in figure.data:
-        if not isinstance(trace.marker.color, str):
-            continue
+        trace.marker.line = {"width": 0}
+        trace.marker.opacity = 0.9
+    ranked = sorted((trace for trace in discrete if trace.name != UNCLUSTERED), key=lambda trace: -(0 if trace.x is None else len(trace.x)))
+    for rank, trace in enumerate(ranked):
+        if rank < len(CATEGORICAL):
+            trace.marker.color = CATEGORICAL[rank]
+        else:
+            trace.marker.color = OTHER
+            trace.showlegend = False
+    for trace in discrete:
         if trace.name == UNCLUSTERED:
             trace.marker.color = MUTED
-            continue
-        trace.marker.color = COMMUNITY_RAMP[step % len(COMMUNITY_RAMP)]
-        step += 1
     return figure
 
 
@@ -95,11 +153,13 @@ def log_histogram(values: pd.Series, x_label: str, bins: int = HISTOGRAM_BINS) -
     median = float(values.median())
     figure = go.Figure(
         go.Bar(
-            x=centres,
+            x=edges[:-1],
             y=counts,
             width=np.diff(edges),
+            offset=0,
+            customdata=centres,
             marker={"color": INK, "line": {"width": 0}},
-            hovertemplate="%{x:.3g}: %{y}<extra></extra>",
+            hovertemplate="%{customdata:.3g}: %{y}<extra></extra>",
             name="count",
         )
     )
@@ -108,14 +168,17 @@ def log_histogram(values: pd.Series, x_label: str, bins: int = HISTOGRAM_BINS) -
         x=np.log10(median),
         y=1,
         yref="paper",
+        yanchor="bottom",
+        yshift=4,
         text=f"median {median:.3g}",
         showarrow=False,
         xanchor="left",
+        xshift=4,
         font={"family": FONT_MONO, "size": TYPE_12, "color": ACCENT},
     )
     slate(figure, CHART_HEIGHT)
-    figure.update_xaxes(type="log", title_text=x_label)
-    figure.update_yaxes(title_text="count")
+    figure.update_xaxes(type="log", dtick=1, title_text=x_label)
+    figure.update_yaxes(title_text="count", rangemode="tozero")
     return figure
 
 
@@ -128,7 +191,7 @@ def effective_radius_histogram(catalogue: pd.DataFrame) -> go.Figure | None:
 
 
 def mass_radius_scatter(catalogue: pd.DataFrame) -> go.Figure | None:
-    """Mass against radius on log axes, coloured by completeness on the ink scale; ``None`` without both measures."""
+    """Mass against radius on log axes, coloured by completeness on the measure scale; ``None`` without both measures."""
     if not {MASS_COLUMN, RADIUS_COLUMN, COMPLETENESS_COLUMN}.issubset(catalogue.columns):
         return None
     mass = pd.to_numeric(catalogue[MASS_COLUMN], errors="coerce")
@@ -154,8 +217,8 @@ def mass_radius_scatter(catalogue: pd.DataFrame) -> go.Figure | None:
             name="galaxies",
         )
     )
-    slate(figure, CHART_HEIGHT)
+    slate(figure, SCATTER_HEIGHT)
     figure.update_layout(coloraxis_colorbar_title_text="completeness %")
-    figure.update_xaxes(type="log", title_text=RADIUS_LABEL)
-    figure.update_yaxes(type="log", title_text=MASS_LABEL)
+    figure.update_xaxes(type="log", dtick=1, title_text=RADIUS_LABEL)
+    figure.update_yaxes(type="log", dtick=1, title_text=MASS_LABEL)
     return figure

@@ -7,12 +7,13 @@ def test_rgba_converts_hex_and_keeps_a_short_alpha():
     assert tokens.rgba("334155", 1.0) == "rgba(51,65,85,1)"
 
 
-def test_ink_scale_runs_from_the_lightest_ramp_step_to_the_darkest():
-    scale = tokens.ink_scale()
+def test_measure_scale_is_viridis_in_ten_steps():
+    scale = tokens.measure_scale()
 
-    assert len(scale) == len(tokens.COMMUNITY_RAMP) == 6
-    assert scale[0] == [0.0, "#90A2BC"]
-    assert scale[-1] == [1.0, "#263140"]
+    assert len(scale) == len(tokens.SEQUENTIAL_STEPS) == 10
+    assert scale[0] == [0.0, "#440154"]
+    assert scale[-1] == [1.0, "#FDE725"]
+    assert len(tokens.CATEGORICAL) == 6 and tokens.ACCENT not in tokens.CATEGORICAL
 
 
 def test_plotly_layout_starts_from_the_canvas_and_accepts_overrides():
@@ -21,7 +22,7 @@ def test_plotly_layout_starts_from_the_canvas_and_accepts_overrides():
     assert layout["template"] == "none"
     assert layout["paper_bgcolor"] == layout["plot_bgcolor"] == tokens.CANVAS
     assert layout["title"] == {"text": None}
-    assert layout["colorway"] == list(tokens.COMMUNITY_RAMP)
+    assert layout["colorway"] == list(tokens.CATEGORICAL)
     assert layout["height"] == 120
 
 

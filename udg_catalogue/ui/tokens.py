@@ -14,8 +14,19 @@ ACCENT = "#6366F1"  # 10 %: the selection class only (seed node, primary action,
 SEPARATOR = "#E2E5EA"  # panel separators, hover rows, banner ground, graph edges
 MUTED = "#94A3B8"  # secondary text, dimmed nodes
 HALO = "#C7D2FE"  # selection halo
-COMMUNITY_RAMP: tuple[str, ...] = ("#263140", "#334155", "#43566F", "#566E90", "#7088A9", "#90A2BC")
 DIMMED_ALPHA = 0.4
+
+# Data colours are chosen for discrimination, not for the chrome palette above.
+# Categorical identity (clusters, graph communities): the Okabe-Ito order, in the
+# six steps that pass the colour-vision and normal-vision separation checks on the
+# canvas; a seventh group and beyond fold into MUTED, never a seventh hue.
+# Continuous measures (dark-matter fraction, completeness): Viridis, perceptually
+# uniform and colour-blind safe, the scale astronomy already reads.
+CATEGORICAL: tuple[str, ...] = ("#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9")
+SEQUENTIAL = "Viridis"
+SEQUENTIAL_STEPS: tuple[str, ...] = (
+    "#440154", "#482878", "#3E4A89", "#31688E", "#26828E", "#1F9E89", "#35B779", "#6DCD59", "#B4DE2C", "#FDE725"
+)
 
 FONT_MONO = "JetBrains Mono, IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
 FONT_SANS = "Inter, -apple-system, Segoe UI, Roboto, system-ui, sans-serif"
@@ -35,23 +46,22 @@ def rgba(hex_colour: str, alpha: float) -> str:
     return f"rgba({red},{green},{blue},{alpha:g})"
 
 
-def ink_scale() -> list[list[float | str]]:
-    """A continuous Plotly colour scale from the lightest ramp step to the darkest."""
-    steps = tuple(reversed(COMMUNITY_RAMP))
-    last = len(steps) - 1
-    return [[index / last, colour] for index, colour in enumerate(steps)]
+def measure_scale() -> list[list[float | str]]:
+    """The continuous Plotly colour scale for a measure: Viridis as ten evenly spaced steps."""
+    last = len(SEQUENTIAL_STEPS) - 1
+    return [[index / last, colour] for index, colour in enumerate(SEQUENTIAL_STEPS)]
 
 
 def plotly_layout(**overrides: Any) -> dict[str, Any]:
-    """The layout every chart of the app starts from: canvas ground, ink type, no title, no shadows."""
+    """The layout every chart of the app starts from: canvas ground, ink type, categorical colorway, no title."""
     layout: dict[str, Any] = {
         "template": "none",
         "paper_bgcolor": CANVAS,
         "plot_bgcolor": CANVAS,
         "font": {"family": FONT_SANS, "color": INK, "size": TYPE_12},
         "title": {"text": None},
-        "colorway": list(COMMUNITY_RAMP),
-        "margin": {"l": SPACE[0], "r": SPACE[0], "t": SPACE[0], "b": SPACE[0]},
+        "colorway": list(CATEGORICAL),
+        "margin": {"l": SPACE[5], "r": SPACE[2], "t": SPACE[4], "b": SPACE[4]},
         "hoverlabel": {
             "bgcolor": CANVAS,
             "bordercolor": INK,
