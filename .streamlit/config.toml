@@ -1,0 +1,40 @@
+# Slate theme of the sci-etl desk brief (sci-etl-internal/ecosystem/ui/00-shared-brief.md):
+# canvas 60 %, type and borders 30 %, one accent for the selection class only.
+# What this file cannot express (mono chips and ids, the 1 px banner, dimmed rows)
+# lives in udg_catalogue/ui/theme.py.
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#6366F1"
+backgroundColor = "#F4F5F7"
+secondaryBackgroundColor = "#E2E5EA"
+textColor = "#334155"
+linkColor = "#334155"
+linkUnderline = true
+borderColor = "#334155"
+dataframeBorderColor = "#E2E5EA"
+dataframeHeaderBackgroundColor = "#E2E5EA"
+codeBackgroundColor = "#E2E5EA"
+codeTextColor = "#334155"
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "2px"
+buttonRadius = "2px"
+baseFontSize = 14
+font = "Inter, -apple-system, Segoe UI, Roboto, system-ui, sans-serif"
+headingFont = "Inter, -apple-system, Segoe UI, Roboto, system-ui, sans-serif"
+codeFont = "JetBrains Mono, IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
+codeFontSize = "12px"
+headingFontSizes = ["20px", "16px", "14px", "14px", "14px", "14px"]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+# A lightness ramp of the ink colour, never a rainbow: the six community steps,
+# and the same ramp interpolated to the ten values Streamlit requires here.
+chartCategoricalColors = ["#263140", "#334155", "#43566F", "#566E90", "#7088A9", "#90A2BC"]
+chartSequentialColors = ["#90A2BC", "#7E93B1", "#6D85A6", "#5F7798", "#526989", "#475B76", "#3E4F66", "#354358", "#2D3A4C", "#263140"]
+
+[theme.sidebar]
+backgroundColor = "#F4F5F7"
+secondaryBackgroundColor = "#E2E5EA"
