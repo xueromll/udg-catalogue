@@ -23,7 +23,7 @@ from udg_catalogue.ui.graph import (
     node_stroke,
     selected_from_state,
 )
-from udg_catalogue.ui.tokens import ACCENT, COMMUNITY_RAMP, HALO, INK, MUTED, SEPARATOR, rgba
+from udg_catalogue.ui.tokens import ACCENT, CATEGORICAL, HALO, INK, MUTED, SEPARATOR, rgba
 
 SEED = GraphNode("2601.00001", "Dragonfly 44 <revisited>", degree=2, community=7, metadata={"year": "2016"})
 NEIGHBOUR = GraphNode("2601.00002", "NGC 1052-DF2", degree=1, community=7)
@@ -64,10 +64,10 @@ def test_edge_kinds_put_semantic_first_then_metadata_then_the_rest():
     assert kind_label("citation") == "citation"
 
 
-def test_community_ranks_order_by_size_and_fold_the_tail_into_the_sixth_step():
+def test_community_ranks_order_by_size_largest_first():
     assert community_ranks(GRAPH.nodes) == {7: 0, 3: 1}
     nodes = [GraphNode(str(index), community=index) for index in range(8)]
-    assert community_ranks(nodes) == {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 5, 7: 5}
+    assert community_ranks(nodes) == {index: index for index in range(8)}
 
 
 def test_dimming_applies_only_with_hits_on_screen_and_spares_seed_and_selection():
@@ -85,9 +85,11 @@ def test_node_fill_and_stroke_follow_the_visual_system():
     ranks = community_ranks(GRAPH.nodes)
 
     assert node_fill(SEED, GRAPH, hits, ranks) == ACCENT
-    assert node_fill(NEIGHBOUR, GRAPH, hits, ranks) == COMMUNITY_RAMP[0]
+    assert node_fill(NEIGHBOUR, GRAPH, hits, ranks) == CATEGORICAL[0]
     assert node_fill(OUTLIER, GRAPH, hits, ranks) == DIMMED
-    assert node_fill(OUTLIER, GRAPH, CanvasStyle(), ranks) == COMMUNITY_RAMP[1]
+    assert node_fill(OUTLIER, GRAPH, CanvasStyle(), ranks) == CATEGORICAL[1]
+    seventh = GraphNode("2601.00009", community=99)
+    assert node_fill(seventh, GRAPH, CanvasStyle(), {**ranks, 99: len(CATEGORICAL)}) == MUTED
     assert node_stroke(SEED, GRAPH, hits) == (HALO, 4.0)
     assert node_stroke(OUTLIER, GRAPH, CanvasStyle(selected=OUTLIER.record_id)) == (HALO, 3.0)
     assert node_stroke(OUTLIER, GRAPH, hits) == (DIMMED, 1.0)
@@ -102,7 +104,7 @@ def test_canvas_draws_one_trace_per_drawn_kind_and_one_for_the_nodes():
     papers = figure.data[-1]
     assert list(papers.customdata) == ["2601.00001", "2601.00002", "2601.00003"]
     assert list(papers.marker.size) == [2 * node_radius(2), 9, 9]
-    assert list(papers.marker.color) == [ACCENT, COMMUNITY_RAMP[0], COMMUNITY_RAMP[1]]
+    assert list(papers.marker.color) == [ACCENT, CATEGORICAL[0], CATEGORICAL[1]]
     assert list(papers.marker.line.width) == [4, 1, 1]
     assert figure.layout.height == CANVAS_HEIGHT
     assert figure.layout.title.text is None
