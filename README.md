@@ -385,9 +385,8 @@ The second command should print a path inside your sci-etl-core checkout. An edi
 * **Analytics View.** Stellar mass and effective radius distributions, plus a mass–radius scatter plot coloured by completeness, all computed on the filtered selection.
 * **Data Export.** Download the filtered selection as CSV.
 * **Refresh Data.** Re-run post-processing on `data/udg_database.csv` without ingesting new papers. Hidden when `UDG_DASHBOARD_READ_ONLY=1`, as in the Compose file.
-* **Paper Search.** Search the indexed papers by keyword, by meaning, or both (hybrid), with Boolean syntax such as `"dark matter" -simulation`, `title:dwarf*` or `NEAR(globular cluster, 5)`. Filter by arXiv category and publication year, and see the matching passage of each paper with the matched words highlighted.
+* **Paper Search.** One screen in the layout of the sci-etl desk brief: a query bar whose parsed terms are shown as chips, a result list with the keyword and meaning ranks of each hit, a graph canvas and an inspector. Facets (arXiv category, year) sit in the sidebar as `value · count` rows and re-query on click; the active filters appear as dashed chips. When a retrieval leg failed or had nothing to run, a banner says which one and stays until a search without that condition. The graph colours communities with a six-step lightness ramp of the text colour, sizes nodes by degree, marks the seed in the accent colour, keeps the current hits at full ink and dims the rest; each edge kind has a toggle, a click or the node selector loads a paper into the inspector, and a toggle makes the canvas fullscreen. The inspector shows the paper's catalogue rows (once the catalogue carries `source_papers`), its rejected extractions when `data/rejected_galaxies.db` exists, and the run manifest's model, prompt hashes and library version. `?view=papers&q=...&paper=<arXiv id>` opens the page on a query and a paper. [`docs/interface.md`](docs/interface.md) describes the layout, the theme tokens and what the Streamlit version does not do (keyboard shortcuts, lasso, the whole-workspace graph), which the desktop application will add.
 * **Papers Mentioning a Galaxy.** Pick a galaxy from the (filtered) catalogue to find the papers whose text names it.
-* **Related Papers.** Grow a discovery graph around any result: papers linked by similar content or shared authors, coloured by community, with a table of arXiv links. The category and year filters prune a graph that is already grown, and moving to a paper that was already in a graph reuses the links found for it.
 
 The dashboard keeps one paper library open for as long as it runs, so the search index, the vector memory and the embedding client are opened once rather than on every search. The links remembered for related papers are forgotten when the paper index changes.
 
@@ -413,15 +412,9 @@ The map's radial axis is scaled as √distance so that nearby and distant galaxi
 
 ### Paper Search
 
-![Paper Search](assets/paper-search2.png)
+![Paper Search](assets/interface-search.png)
 
-*Search the indexed papers by keyword, by meaning, or both, filtered by arXiv category and publication year, or pick a galaxy to find the papers that mention it.*
-
-### Related Papers
-
-![Related Papers](assets/paper-search.png)
-
-*Discovery graph around a chosen paper. Solid lines link papers with similar content, dashed lines link papers with shared authors and categories, and colours mark communities. The table below lists each paper with its arXiv link.*
+*The search page at 1440×900: query bar with chips, hit list, graph canvas with the seed in the accent colour and communities in a single-hue ramp, and the inspector with the paper's catalogue rows and extraction stamp. Facets are in the sidebar.*
 
 ---
 
@@ -434,7 +427,7 @@ pip install -r requirements/dev.txt
 pytest --cov -W error::DeprecationWarning
 ```
 
-Coverage of `udg_catalogue` and `main.py` must stay at 100%. `pyproject.toml` enforces this, and CI checks it on every push and pull request, with every `DeprecationWarning` treated as an error so that a deprecation in sci-etl-core is noticed before the name is removed.
+Coverage of `udg_catalogue` and `main.py` must stay at 100%. `udg_catalogue/ui`, which holds everything the dashboard draws from, is inside that measure; `app.py` itself is exercised by `tests/test_app.py` but stays outside it. `pyproject.toml` enforces this, and CI checks it on every push and pull request, with every `DeprecationWarning` treated as an error so that a deprecation in sci-etl-core is noticed before the name is removed.
 
 `tests/contract/` runs sci-etl-core's contract suites, from `sci_etl_core.testing` in the `testing` extra that `requirements/dev.txt` installs, against this repository's own components: `ExtractorContract` against `LoggingExtractor` over the arXiv extractor, served by an in-memory listing, and `ExporterContract` against the raw-catalogue CSV exporter with galaxy rows. `DiscardingExporter` keeps nothing by design, so it cannot satisfy a contract that reads entities back, and the repository wraps no state manager or vector store of its own. The dashboard, `app.py`, is exercised by the `AppTest` tests but is not part of that measure, so the badge's 100% does not cover it.
 
