@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 
 from udg_catalogue.maps import build_3d_figure, prepare_map_frame
 from udg_catalogue.ui import charts
-from udg_catalogue.ui.tokens import ACCENT, CANVAS, COMMUNITY_RAMP, INK, MUTED
+from udg_catalogue.ui.tokens import ACCENT, CANVAS, CATEGORICAL, INK, MUTED
 
 CATALOGUE = pd.DataFrame(
     {
@@ -25,28 +25,31 @@ def test_slate_sets_the_canvas_layout_mono_ticks_and_an_optional_height():
 
     assert figure.layout.paper_bgcolor == CANVAS
     assert figure.layout.height == 200
-    assert figure.layout.coloraxis.colorscale[0][1] == "#90A2BC"
+    assert figure.layout.coloraxis.colorscale[0][1] == "#440154"
     assert figure.layout.xaxis.tickfont.family.startswith("JetBrains Mono")
     assert charts.slate(go.Figure()).layout.height is None
 
 
-def test_restyle_map_uses_ramp_steps_per_cluster_and_grey_for_the_unclustered():
+def test_restyle_map_uses_one_categorical_hue_per_cluster_and_grey_for_the_unclustered():
     frame = prepare_map_frame(CATALOGUE)
     frame["cluster_label"] = frame["cluster_id"].map(charts.cluster_label)
     figure = charts.restyle_map(build_3d_figure(frame, color_column="cluster_label", color_label="Cluster", color_range=None))
 
     colours = {trace.name: trace.marker.color for trace in figure.data}
     assert colours[charts.UNCLUSTERED] == MUTED
-    assert sorted(colour for name, colour in colours.items() if name != charts.UNCLUSTERED) == sorted(COMMUNITY_RAMP[:2])
-    assert figure.layout.scene.xaxis.backgroundcolor == CANVAS
+    assert sorted(colour for name, colour in colours.items() if name != charts.UNCLUSTERED) == sorted(CATEGORICAL[:2])
+    assert figure.layout.scene.bgcolor == CANVAS
+    assert figure.layout.scene.xaxis.backgroundcolor == charts.WALL
+    assert figure.layout.margin.l == 0
     assert figure.layout.title.text is None
 
 
-def test_restyle_map_leaves_a_continuous_colour_axis_on_the_ink_scale():
+def test_restyle_map_leaves_a_continuous_colour_axis_on_the_measure_scale():
     figure = charts.restyle_map(build_3d_figure(prepare_map_frame(CATALOGUE)))
 
     assert not isinstance(figure.data[0].marker.color, str)
-    assert figure.layout.coloraxis.colorscale[-1][1] == "#263140"
+    assert figure.layout.coloraxis.colorscale[-1][1] == "#FDE725"
+    assert figure.data[0].marker.line.width == 0
 
 
 def test_positive_values_filters_non_numeric_and_non_positive_entries():
@@ -89,9 +92,28 @@ def test_mass_radius_scatter_colours_by_completeness_on_log_axes():
     assert charts.mass_radius_scatter(CATALOGUE.assign(stellar_mass_solar=0.0)) is None
 
 
-def test_px_discrete_figures_without_the_unclustered_trace_cycle_the_ramp():
-    figure = px.scatter_3d(pd.DataFrame({"x": range(7), "y": range(7), "z": range(7), "c": [str(i) for i in range(7)]}), x="x", y="y", z="z", color="c")
+def test_restyle_map_draws_galaxies_without_the_measure_in_grey_instead_of_as_zero():
+    frame = pd.DataFrame({"x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0], "z": [0.0, 1.0, 2.0], "m": [0.5, float("nan"), 1.0], "s": [3, 4, 5]})
+    figure = px.scatter_3d(frame, x="x", y="y", z="z", color="m", size="s", custom_data=["s"])
 
     charts.restyle_map(figure)
 
-    assert [trace.marker.color for trace in figure.data] == [*COMMUNITY_RAMP, COMMUNITY_RAMP[0]]
+    measured, grey = figure.data
+    assert list(measured.x) == [0.0, 2.0] and list(measured.marker.color) == [0.5, 1.0] and list(measured.marker.size) == [3, 5]
+    assert list(grey.x) == [1.0] and grey.marker.color == MUTED and list(grey.marker.size) == [4]
+    assert grey.name == charts.NO_VALUE and grey.showlegend is True and grey.marker.coloraxis is None
+    assert [list(row) for row in grey.customdata] == [[4]]
+    assert charts.split_missing(measured) is None
+
+
+def test_px_discrete_figures_colour_the_six_largest_groups_and_fold_the_rest_off_the_legend():
+    frame = pd.DataFrame({"x": range(9), "y": range(9), "z": range(9), "c": ["big", "big", *(str(i) for i in range(7))]})
+    figure = px.scatter_3d(frame, x="x", y="y", z="z", color="c")
+
+    charts.restyle_map(figure)
+
+    by_name = {trace.name: trace for trace in figure.data}
+    assert by_name["big"].marker.color == CATEGORICAL[0]
+    assert [by_name[str(i)].marker.color for i in range(5)] == list(CATEGORICAL[1:])
+    assert by_name["5"].marker.color == by_name["6"].marker.color == charts.OTHER
+    assert by_name["6"].showlegend is False and by_name["big"].showlegend is True

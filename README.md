@@ -385,7 +385,7 @@ The second command should print a path inside your sci-etl-core checkout. An edi
 * **Analytics View.** Stellar mass and effective radius distributions, plus a mass–radius scatter plot coloured by completeness, all computed on the filtered selection.
 * **Data Export.** Download the filtered selection as CSV.
 * **Refresh Data.** Re-run post-processing on `data/udg_database.csv` without ingesting new papers. Hidden when `UDG_DASHBOARD_READ_ONLY=1`, as in the Compose file.
-* **Paper Search.** One screen in the layout of the sci-etl desk brief: a query bar whose parsed terms are shown as chips, a result list with the keyword and meaning ranks of each hit, a graph canvas and an inspector. Facets (arXiv category, year) sit in the sidebar as `value · count` rows and re-query on click; the active filters appear as dashed chips. When a retrieval leg failed or had nothing to run, a banner says which one and stays until a search without that condition. The graph colours communities with a six-step lightness ramp of the text colour, sizes nodes by degree, marks the seed in the accent colour, keeps the current hits at full ink and dims the rest; each edge kind has a toggle, a click or the node selector loads a paper into the inspector, and a toggle makes the canvas fullscreen. The inspector shows the paper's catalogue rows (once the catalogue carries `source_papers`), its rejected extractions when `data/rejected_galaxies.db` exists, and the run manifest's model, prompt hashes and library version. `?view=papers&q=...&paper=<arXiv id>` opens the page on a query and a paper. [`docs/interface.md`](docs/interface.md) describes the layout, the theme tokens and what the Streamlit version does not do (keyboard shortcuts, lasso, the whole-workspace graph), which the desktop application will add.
+* **Paper Search.** One screen in the layout of the sci-etl desk brief: a query bar whose parsed terms are shown as chips, a result list with the keyword and meaning ranks of each hit, a graph canvas and an inspector. Facets (arXiv category, year) sit in the sidebar as `value · count` rows and re-query on click; the active filters appear as dashed chips. When a retrieval leg failed or had nothing to run, a banner says which one and stays until a search without that condition. The graph colours communities with the Okabe-Ito palette, sizes nodes by degree, marks the seed in the accent colour, keeps the current hits at full ink and dims the rest; each edge kind has a toggle, a click or the node selector loads a paper into the inspector, and a toggle makes the canvas fullscreen. The inspector shows the paper's catalogue rows (once the catalogue carries `source_papers`), its rejected extractions when `data/rejected_galaxies.db` exists, and the run manifest's model, prompt hashes and library version. `?view=papers&q=...&paper=<arXiv id>` opens the page on a query and a paper. [`docs/interface.md`](docs/interface.md) describes the layout, the theme tokens and what the Streamlit version does not do (keyboard shortcuts, lasso, the whole-workspace graph), which the desktop application will add.
 * **Papers Mentioning a Galaxy.** Pick a galaxy from the (filtered) catalogue to find the papers whose text names it.
 
 The dashboard keeps one paper library open for as long as it runs, so the search index, the vector memory and the embedding client are opened once rather than on every search. The links remembered for related papers are forgotten when the paper index changes.
@@ -402,19 +402,19 @@ The map's radial axis is scaled as √distance so that nearby and distant galaxi
 
 ![3D Map](assets/demo.png)
 
-*Interactive 3D map of UDGs with known position and distance. Hover over any point to see its constellation, cluster, completeness and measured parameters.*
+*Interactive 3D map of UDGs with known position and distance, coloured by dark-matter fraction on Viridis; a galaxy without the measure is grey, never drawn as zero. Hover over any point to see its constellation, cluster, completeness and measured parameters.*
 
 ### Analytics Dashboard
 
 ![Analytics](assets/analytics.png)
 
-*Statistical plots: stellar mass distribution, effective radius distribution and the mass–radius relation coloured by completeness.*
+*Statistical plots: stellar mass and effective radius in log-spaced bins with the median marked, and the mass–radius relation coloured by completeness on Viridis.*
 
 ### Paper Search
 
 ![Paper Search](assets/interface-search.png)
 
-*The search page at 1440×900: query bar with chips, hit list, graph canvas with the seed in the accent colour and communities in a single-hue ramp, and the inspector with the paper's catalogue rows and extraction stamp. Facets are in the sidebar.*
+*The search page at 1440×900: query bar with chips, hit list, graph canvas with the seed in the accent colour and communities in distinct hues, and the inspector with the paper's catalogue rows and extraction stamp. Facets are in the sidebar.*
 
 ---
 

@@ -1,6 +1,6 @@
 """The graph canvas: a restyled Plotly scatter of the discovery graph.
 
-Nodes are filled by community with the six-step ink ramp and sized by degree,
+Nodes are filled by community with the categorical palette and sized by degree,
 the seed is the one accent element, hits keep full ink and everything else is
 dimmed, and edges are drawn per kind so each kind can be switched off. The
 layout is the catalogue's spring layout, seeded from the record ids, so the
@@ -22,7 +22,7 @@ from sci_etl_core.search import DiscoveryGraph, GraphNode
 from udg_catalogue.paper_views import node_hover, spring_layout
 from udg_catalogue.ui.tokens import (
     ACCENT,
-    COMMUNITY_RAMP,
+    CATEGORICAL,
     DIMMED_ALPHA,
     HALO,
     INK,
@@ -79,12 +79,12 @@ def kind_label(kind: str) -> str:
 
 
 def community_ranks(nodes: Sequence[GraphNode]) -> dict[int, int]:
-    """Communities ranked by size, largest first; the sixth ramp step gathers every smaller community."""
+    """Communities ranked by size, largest first; ranks beyond the palette are filled in the muted grey."""
     sizes: dict[int, int] = {}
     for node in nodes:
         sizes[node.community] = sizes.get(node.community, 0) + 1
     ordered = sorted(sizes, key=lambda community: (-sizes[community], community))
-    return {community: min(rank, len(COMMUNITY_RAMP) - 1) for rank, community in enumerate(ordered)}
+    return {community: rank for rank, community in enumerate(ordered)}
 
 
 def is_dimmed(node: GraphNode, graph: DiscoveryGraph, style: CanvasStyle) -> bool:
@@ -99,7 +99,8 @@ def node_fill(node: GraphNode, graph: DiscoveryGraph, style: CanvasStyle, ranks:
         return ACCENT
     if is_dimmed(node, graph, style):
         return rgba(MUTED, DIMMED_ALPHA)
-    return COMMUNITY_RAMP[ranks[node.community]]
+    rank = ranks[node.community]
+    return CATEGORICAL[rank] if rank < len(CATEGORICAL) else MUTED
 
 
 def node_stroke(node: GraphNode, graph: DiscoveryGraph, style: CanvasStyle) -> tuple[str, float]:
