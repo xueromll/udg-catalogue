@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-2F5BEA?style=flat-square)](#installation)
 [![License](https://img.shields.io/badge/license-MIT-2F5BEA?style=flat-square)](LICENSE)
 
-**A literature-derived catalogue of 1,012 ultra-diffuse galaxies (UDGs) from 323 arXiv papers, where every galaxy names the papers its values came from, and the open pipeline that builds it.**
+**A literature-derived catalogue of 1,031 ultra-diffuse galaxies (UDGs) from 323 arXiv papers, where every galaxy names the papers its values came from, and the open pipeline that builds it.**
 
 UDG measurements are scattered across hundreds of papers, in different tables, units and naming schemes. `udg-catalogue` reads that literature for you. It screens astro-ph submissions, reads each relevant paper's LaTeX source or PDF, has an LLM extract each galaxy's position, distance, effective radius, stellar mass and dark-matter fraction, validates every value against physical rules, and cross-identifies galaxies across papers by name and sky position. The result is one CSV you can load in a line of pandas, a dashboard with a 3D map, and full-text search over every paper behind it.
 
@@ -61,30 +61,30 @@ The pipeline runs on [sci-etl-core](https://github.com/xueromll/sci-etl-core), w
 
 ## Results at a Glance
 
-From the rebuild of 2026-10-21:
+From the rebuild of 2026-10-21, after the 47 papers with rejected galaxies were extracted again with the prompt that asks for a quote:
 
 | Metric | Value |
 |---|---|
 | **arXiv submissions screened** | 462 |
 | **Papers read in full** | 323 |
-| **Unique galaxies catalogued** | 1,012 |
-| **Objects with all six measurements (`Confirmed`)** | 21 (2.1%) |
+| **Unique galaxies catalogued** | 1,031 |
+| **Objects with all six measurements (`Confirmed`)** | 20 (1.9%) |
 | **Objects with sky position and distance (3D map)** | 525 |
 | **3D spatial groups (DBSCAN)** | 35 |
 | **IAU constellations represented** | 39 |
 | **Median record completeness** | 66.7% |
-| **LLM tokens used** | 6.8 million |
+| **LLM tokens used** | 6.8 million, plus 1.0 million to extract the 47 papers again |
 | **ETL framework** | sci-etl-core 0.7 |
 
 ### Parameter coverage
 
 | Parameter | Column | Unit | Objects | Coverage | Median |
 |---|---|---|---:|---:|---:|
-| Right ascension, declination (ICRS) | `ra`, `dec` | deg | 799 | 79.0% | — |
-| Distance | `distance_mpc` | Mpc | 640 | 63.2% | 72.3 |
-| Effective radius | `effective_radius_kpc` | kpc | 764 | 75.5% | 2.10 |
-| Stellar mass | `stellar_mass_solar` | M☉ | 410 | 40.5% | 9.6 × 10⁷ |
-| Dark-matter fraction | `dark_matter_fraction` | — | 29 | 2.9% | 0.94 |
+| Right ascension, declination (ICRS) | `ra`, `dec` | deg | 800 | 77.6% | — |
+| Distance | `distance_mpc` | Mpc | 658 | 63.8% | 72.3 |
+| Effective radius | `effective_radius_kpc` | kpc | 765 | 74.2% | 2.10 |
+| Stellar mass | `stellar_mass_solar` | M☉ | 410 | 39.8% | 9.6 × 10⁷ |
+| Dark-matter fraction | `dark_matter_fraction` | — | 27 | 2.6% | 0.95 |
 
 ## Quick Start
 
@@ -141,7 +141,7 @@ Pick the path that fits what you want to do:
 
 ### Raw catalogue
 
-`data/udg_database.csv` has one row per galaxy per paper: `record_id` (the arXiv id), `galaxy_name`, the six measurements as the model returned them, and `extra`, a JSON object holding any other fields the model returned. It is not committed; `data/run_manifest.json` records its row count and SHA-256. When papers disagree, the raw catalogue keeps every paper's value.
+`data/udg_database.csv` has one row per galaxy per paper: `record_id` (the arXiv id), `galaxy_name`, the six measurements as the model returned them, and `extra`, a JSON object holding any other fields the model returned, such as the `quote` it gave for the galaxy. It is not committed; `data/run_manifest.json` records its row count and SHA-256. When papers disagree, the raw catalogue keeps every paper's value.
 
 ## How It Works
 
@@ -170,7 +170,7 @@ An embedding prescreen first drops listings unlike every UDG concept. The LLM th
 
 ### 2. Extraction
 
-For each object the paper classifies as a UDG or UDG candidate, DeepSeek V4-Flash in JSON mode returns `galaxy_name`, `ra`, `dec`, `distance_mpc`, `effective_radius_kpc`, `stellar_mass_solar` and `dark_matter_fraction`. The prompt fixes the units:
+For each object the paper classifies as a UDG or UDG candidate, DeepSeek V4-Flash in JSON mode returns `galaxy_name`, `ra`, `dec`, `distance_mpc`, `effective_radius_kpc`, `stellar_mass_solar` and `dark_matter_fraction`, with a `quote`: the sentence that gives the values, or names the object when it gives none, copied exactly. The prompt fixes the units:
 
 - positions in ICRS decimal degrees, with sexagesimal positions converted;
 - distances in Mpc;
@@ -420,9 +420,11 @@ A rebuild reprocesses every matching paper: the 2026-10-21 rebuild screened 462 
 
 The committed catalogue comes from that 2026-10-21 rebuild with sci-etl-core 0.7, the first with per-paper rows, `source_papers`, the rejection store and the prompt that extracts only the objects a paper classifies as UDGs. It replaced the 1,927-galaxy catalogue of 2026-09-24, which still held non-UDG objects such as ultra-compact dwarfs and galaxy clusters, paper-local names and 124 pairs of rows within 3″. Catalogues extracted before the sci-etl-core 0.4 migration could merge distinct galaxies that shared a catalogue number, such as `KDG 44` and `DF 44`, or `NGC 1052-DF2` and `NGC 1052-DF4`; the rebuilt catalogue keeps them apart.
 
+Later on 2026-10-21, the 47 papers with rejected galaxies were extracted again with `--reprocess`, after the prompt began asking for a quote, so that every rejection shows the sentence it was read from. That run used 1.0 million LLM tokens and took the catalogue from 1,012 to 1,031 galaxies. The other 415 papers keep their extraction from the earlier prompt.
+
 ### Reviewing Rejected Galaxies
 
-Every galaxy the validation rules reject is stored in `data/rejected_galaxies.db` with its arXiv id, the values the model returned, each broken rule's code and message, and the model and a hash of the prompt that produced it. Rejecting the same galaxy again with the same model and prompt adds no new entry and keeps any review decision. To list the entries not yet reviewed:
+Every galaxy the validation rules reject is stored in `data/rejected_galaxies.db` with its arXiv id, the values the model returned, the sentence it quoted, each broken rule's code and message, and the model and a hash of the prompt that produced it. Rejecting the same galaxy again with the same model and prompt adds no new entry and keeps any review decision. To list the entries not yet reviewed:
 
 ```python
 import asyncio
@@ -512,7 +514,7 @@ Every location can be changed under `paths` in `config.yaml`. Relative paths are
 
 ### Testing
 
-The suite's 354 tests run offline. arXiv is replaced by an in-memory Atom feed and e-print, DeepSeek by a scripted client, the embedding model by a word-hashing embedder, and the dashboard is exercised with Streamlit's `AppTest`.
+The suite's 355 tests run offline. arXiv is replaced by an in-memory Atom feed and e-print, DeepSeek by a scripted client, the embedding model by a word-hashing embedder, and the dashboard is exercised with Streamlit's `AppTest`.
 
 ```bash
 pip install -r requirements/dev.txt
