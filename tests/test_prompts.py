@@ -14,6 +14,11 @@ def test_extraction_prompt_asks_for_every_exported_field_under_the_result_key():
         assert f'"{field}"' in EXTRACTION_PROMPT
 
 
+def test_extraction_prompt_asks_for_a_quote_the_rejection_store_keeps():
+    assert '"quote": "string"' in EXTRACTION_PROMPT
+    assert "copied exactly" in EXTRACTION_PROMPT
+
+
 def test_extraction_prompt_limits_objects_to_the_papers_udgs():
     assert "classifies as ultra-diffuse galaxies or UDG candidates" in EXTRACTION_PROMPT
 

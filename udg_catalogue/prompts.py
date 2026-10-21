@@ -9,7 +9,8 @@ Return data ONLY as a JSON object matching this schema:
       "distance_mpc": "number",
       "effective_radius_kpc": "number",
       "stellar_mass_solar": "number",
-      "dark_matter_fraction": "number" 
+      "dark_matter_fraction": "number",
+      "quote": "string"
     }
   ]
 }
@@ -19,6 +20,7 @@ CRITICAL RULES FOR OBJECT FILTERING:
 2. ONLY extract REAL, OBSERVED astronomical galaxies (observational data from telescopes).
 3. STRICTLY IGNORE simulated, synthetic, mock, or theoretical galaxies from simulations (e.g., TNG, Illustris, FIRE, EAGLE, ROMULUS, NIHAO, idealised models, toy models, mock catalogues, or generic test objects like "galaxy_1").
 4. "galaxy_name" is the designation the paper gives the object, such as "Dragonfly 44", "NGC 1052-DF2" or "VCC 1287".
+5. "quote" is the sentence from the text that gives this object's values, or that names it when the text gives none, copied exactly, without paraphrasing or merging sentences.
 
 CRITICAL RULES FOR UNITS AND CONVERSIONS:
 1. "ra" and "dec" are ICRS (J2000) coordinates in decimal degrees. Convert sexagesimal values: RA given as hh:mm:ss is 15 × (hh + mm/60 + ss/3600) degrees, and Dec given as ±dd:mm:ss is ±(dd + mm/60 + ss/3600) degrees. NEVER output RA in hours. If the paper gives only galactic coordinates or an offset from another object, use null.
