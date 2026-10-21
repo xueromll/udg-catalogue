@@ -10,6 +10,26 @@ Run it with `streamlit run app.py`. The paper search page needs the paper
 index (`python main.py --index-papers`); the table, map and analytics pages
 work from the committed `data/udg_database_sorted.csv` alone.
 
+## Board frame
+
+Every page is laid out as an early-2000s bulletin board. A ruled site header
+under a 4 px ink rule carries the title, the tagline
+(`ui.forum.tagline_html`) and a nav strip (`ui.forum.nav_html`: a `?view=` link
+per page, the current page in the accent, the time on the right); a
+breadcrumb (`ui.forum.breadcrumb_html`) names the section and the page,
+`UDG Catalogue › Galaxies › Data Table`. On the catalogue pages a board index
+follows (`ui.forum.board_rows` and `board_html`): the eight largest
+constellations and clusters of the selection as forum tables with a lamp
+(■ the group has a confirmed galaxy, □ it has none), the galaxies, confirmed
+and mapped counts, the nearest mapped galaxy, and a `... n more` row. Each
+section is a board, a 1 px ink rule around a keyed `board-*` container whose
+first row is an ink category bar; the sidebar's navigation, filters and
+facets are `block-*` boards of the same kind. A statistics box
+(`ui.forum.stats_lines`: catalogue and selection sizes, quality flags, the
+mapped count and median distance, the largest and most massive galaxy, the
+last build from the run manifest) with the lamp legend, and a footer with the
+catalogue and sci-etl-core versions, close every page.
+
 ## Layout at 1440 px
 
 One column = 12 px. The sidebar is Streamlit's (about 300 px); the main area
@@ -70,7 +90,7 @@ fused score, shown raw because it is comparable only within one result list.
 | Status line | `ui.chips.status_line`: `total_matched · shown · elapsed_ms` in mono | `DiscoveryResult.total_matched`, `elapsed_ms` |
 | Banner, persistent, never a toast | `ui.chips.banner_lines` and `banner_html`: one line per condition, `!` for a failed leg, `i` for a skipped one or approximate communities; it is drawn on every run while the condition holds on the current result | `DiscoveryResult.degraded`, `skipped`, `DiscoveryGraph.communities_converged` |
 | Facets sidebar, key → value (count), selecting re-queries | `ui.facets.facet_groups`: eight rows per key plus every selected row, a `... n more` line, one tertiary button per row, the selected row with a 2 px accent bar; clicking toggles the value and the search re-runs with the new filters | `DiscoveryResult.facets`; before a search, the index's category counts from `LibraryOverview` |
-| Hit list | `ui.hits.hit_html` inside a bordered container per hit, snippets with the matched words in bold, a `Select` button | `DiscoveryResult.hits`, `FusedHit.snippets` |
+| Hit list | `ui.hits.hit_html` in a striped topic row per hit (a `topic-*` container), snippets with the matched words in bold, a `Select` button | `DiscoveryResult.hits`, `FusedHit.snippets` |
 | Graph canvas | `ui.graph.build_canvas`: Plotly scatter, community ramp, degree-scaled radii, seed in the accent with a halo, hits at full ink, the rest dimmed, edges in the separator colour, one checkbox per edge kind present, click to select through `st.plotly_chart(on_select="rerun")`, a `Select a node` selectbox as the fallback, a `Graph fullscreen` toggle | `DiscoveryGraph` from `PaperLibrary.related_papers`, pruned by the active filters with `filter_graph` |
 | Inspector | `ui.inspector`: id linked in mono, title in sans, authors and `year · categories` in the secondary colour; the catalogue rows whose `source_papers` (or raw `record_id`) name the paper, with the measured columns; the paper's rows of `data/rejected_galaxies.db`; the run manifest's model, prompt hashes, library version and build date as the extraction stamp; `Open in graph` recenters the graph on the inspected paper | `SearchDocument`, the catalogue CSV, the rejection store's `rejections` table, `data/run_manifest.json` |
 | Empty states | One sentence in the secondary colour per region: no catalogue, no index, no search yet, no graph yet, no selection, no galaxies, no review store, no manifest | — |
@@ -110,8 +130,8 @@ later hit selection.
   for both rather than `metadata:authors` and `metadata:categories`.
 - **Motion and dark mode.** Hover transitions follow the 120 ms rule where
   CSS reaches; Streamlit's theme is fixed to the light slate palette.
-- **Fonts.** Inter and JetBrains Mono load from Google Fonts when the
-  browser is online, with the system sans and mono as fallbacks; the
+- **Fonts.** Verdana is a system font; JetBrains Mono loads from Google
+  Fonts when the browser is online, with the system mono as fallback; the
   application itself makes no network call.
 
 ## Theme tokens
@@ -130,9 +150,9 @@ later hit selection.
 | halo | `#C7D2FE` | the ring of the seed and of the selected node |
 | community ramp | `#263140 #334155 #43566F #566E90 #7088A9 #90A2BC` | node fill by community size rank, the sixth step gathers the tail; reversed, the continuous scale of the map and the scatter |
 | mono | JetBrains Mono, IBM Plex Mono, SFMono-Regular, Menlo, Consolas | ids, numbers, chips, status lines, the query bar, facet rows, stamp |
-| sans | Inter, -apple-system, Segoe UI, Roboto, system-ui | titles, body, headings |
+| sans | Verdana, Tahoma, DejaVu Sans, Segoe UI | titles, body, headings, category bars |
 | type scale | 12 / 14 / 16 px | secondary / body / inspector title |
-| grid, border, radius | 8 px, 1 px, 2 px | spacing, every border, every corner |
+| grid, border, radius | 8 px, 1 px, 0 px | spacing, every border, every corner |
 | node radius | `clip(3 + 1.5 * sqrt(degree), 3, 14)` px | canvas marker size |
 | shadows, gradients, colour bars on the canvas | none | — |
 

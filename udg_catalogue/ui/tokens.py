@@ -1,4 +1,4 @@
-"""Design tokens of the slate visual system.
+"""Design tokens of the slate visual system, laid out as an early-2000s bulletin board.
 
 Everything that draws a colour, a font or a size reads it from here.
 """
@@ -28,13 +28,13 @@ SEQUENTIAL_STEPS: tuple[str, ...] = (
 )
 
 FONT_MONO = "JetBrains Mono, IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
-FONT_SANS = "Inter, -apple-system, Segoe UI, Roboto, system-ui, sans-serif"
+FONT_SANS = "Verdana, Tahoma, DejaVu Sans, Segoe UI, sans-serif"
 TYPE_12 = 12
 TYPE_14 = 14
 TYPE_16 = 16
 SPACE: tuple[int, ...] = (8, 16, 24, 32, 40, 48)
 BORDER_WIDTH = 1
-RADIUS = 2
+RADIUS = 0
 MOTION_STATE_MS = 120
 
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import datetime
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -12,6 +14,7 @@ from sci_etl_core.discovery import DiscoveryResult, Facet
 from sci_etl_core.embeddings import AsyncEmbedder
 from sci_etl_core.search import DiscoveryGraph, SearchDocument, filter_graph
 
+from udg_catalogue import __version__
 from udg_catalogue.config import (
     DEFAULT_CONFIG_PATH,
     EMBEDDING_API_KEY_ENV_VAR,
@@ -46,6 +49,18 @@ from udg_catalogue.ui.chips import (
     status_line,
 )
 from udg_catalogue.ui.facets import facet_groups, overview_facets, selection_filters, toggled
+from udg_catalogue.ui.forum import (
+    SITE_NAME,
+    board_html,
+    board_rows,
+    breadcrumb_html,
+    footer_html,
+    legend_html,
+    nav_html,
+    stats_html,
+    stats_lines,
+    tagline_html,
+)
 from udg_catalogue.ui.graph import (
     CanvasStyle,
     build_canvas,
@@ -79,10 +94,12 @@ ANALYTICS_VIEW = "Analytics"
 PAPERS_VIEW = "Paper Search"
 VIEWS: tuple[str, ...] = (TABLE_VIEW, ANALYTICS_VIEW, PAPERS_VIEW)
 VIEW_SLUGS: dict[str, str] = {"table": TABLE_VIEW, "analytics": ANALYTICS_VIEW, "papers": PAPERS_VIEW}
+VIEW_SECTIONS: dict[str, str] = {TABLE_VIEW: "Galaxies", ANALYTICS_VIEW: "Galaxies", PAPERS_VIEW: "Papers"}
 VIEW_PARAM = "view"
 QUERY_PARAM = "q"
 PAPER_PARAM = "paper"
 QUERY_KEY = "query-bar"
+HEADER_KEY = "site-header"
 GALAXY_KEY = "galaxy-pick"
 SEED_KEY = "graph_seed"
 SELECTED_KEY = "inspector_record"
@@ -276,13 +293,13 @@ def apply_galaxy() -> None:
 def sidebar_filters(catalogue: pd.DataFrame) -> tuple[str, str | int, float, str]:
     constellations = [ALL, *sorted(catalogue["constellation"].dropna().unique().tolist())]
     clusters = [ALL, *sorted(catalogue["cluster_id"].dropna().astype(int).unique().tolist())]
-    constellation = st.sidebar.selectbox("Constellation", constellations)
-    cluster = st.sidebar.selectbox("Cluster ID", clusters)
-    min_completeness = st.sidebar.slider("Minimum Completeness (%)", 0.0, 100.0, 0.0, 10.0)
+    constellation = st.selectbox("Constellation", constellations)
+    cluster = st.selectbox("Cluster ID", clusters)
+    min_completeness = st.slider("Minimum Completeness (%)", 0.0, 100.0, 0.0, 10.0)
     flag = ALL
     if "quality_flag" in catalogue.columns:
         flags = [ALL, *sorted(catalogue["quality_flag"].dropna().unique().tolist())]
-        flag = st.sidebar.selectbox("Quality Flag", flags)
+        flag = st.selectbox("Quality Flag", flags)
     return constellation, cluster, min_completeness, flag
 
 
@@ -308,6 +325,11 @@ def render_map(filtered: pd.DataFrame) -> None:
 
 
 def render_table(filtered: pd.DataFrame) -> None:
+    with st.container(key="board-table"):
+        draw_table(filtered)
+
+
+def draw_table(filtered: pd.DataFrame) -> None:
     st.subheader("Data Table")
     if "current_page" not in st.session_state:
         st.session_state.current_page = 1
@@ -349,17 +371,34 @@ def render_figure(figure: Any, empty_message: str) -> None:
 
 
 def render_analytics(filtered: pd.DataFrame) -> None:
-    st.subheader("Statistical Analytics")
-    mass_column, radius_column = st.columns(2)
-    with mass_column:
-        render_figure(charts.stellar_mass_histogram(filtered), "Not enough data to plot the stellar mass.")
-    with radius_column:
-        render_figure(charts.effective_radius_histogram(filtered), "Not enough data to plot the effective radius.")
-    render_figure(charts.mass_radius_scatter(filtered), "Not enough data for the mass against radius plot.")
+    with st.container(key="board-analytics"):
+        st.subheader("Statistical Analytics")
+        mass_column, radius_column = st.columns(2)
+        with mass_column:
+            render_figure(charts.stellar_mass_histogram(filtered), "Not enough data to plot the stellar mass.")
+        with radius_column:
+            render_figure(charts.effective_radius_histogram(filtered), "Not enough data to plot the effective radius.")
+        render_figure(charts.mass_radius_scatter(filtered), "Not enough data for the mass against radius plot.")
+
+
+def render_index(filtered: pd.DataFrame) -> None:
+    constellations, clusters = st.columns(2)
+    with constellations:
+        html(board_html("Constellation", *board_rows(filtered, "constellation"), "constellations"))
+    with clusters:
+        html(board_html("Cluster", *board_rows(filtered, "cluster_id", cluster_label), "clusters"))
+
+
+def render_stats(config: CatalogueConfig, catalogue: pd.DataFrame, filtered: pd.DataFrame) -> None:
+    with st.container(key="board-stats"):
+        html(region_html("Statistics"))
+        html(stats_html(stats_lines(catalogue, filtered, load_manifest(config.paths.run_manifest))))
+        html(legend_html())
+    html(footer_html(__version__, version("sci-etl-core")))
 
 
 def render_facets(area: Any, facets: Sequence[Facet], selection: dict[str, tuple[str, ...]]) -> None:
-    with area:
+    with area, st.container(key="block-facets"):
         html(region_html("Facets"))
         for group in facet_groups(facets, selection):
             html(f'<div class="udg-meta">{group.key}</div>')
@@ -382,7 +421,7 @@ def render_hits(result: DiscoveryResult, selected: str | None) -> None:
     if not result.hits:
         html(quiet_html(NO_HITS))
     for position, hit in enumerate(result.hits, start=1):
-        with st.container(border=True):
+        with st.container(key=f"topic-{hit.record_id}"):
             html(hit_html(position, hit, selected))
             for snippet in hit.snippets:
                 st.markdown(f"{snippet.field}: {highlight_markdown(snippet)}")
@@ -537,47 +576,53 @@ def main() -> None:
         if st.query_params.get(PAPER_PARAM):
             select_hit(st.query_params[PAPER_PARAM])
 
-    st.title("Ultra-Diffuse Galaxies (UDG) Research Dashboard")
+    header = st.container(key=HEADER_KEY)
+    with header:
+        st.title("Ultra-Diffuse Galaxies (UDG) Research Dashboard")
+        if not catalogue.empty:
+            html(tagline_html(len(catalogue)))
     if catalogue.empty:
         html(quiet_html(NO_CATALOGUE))
         return
-    html(status_html(f"{len(catalogue):,} galaxies in the catalogue"))
 
-    with st.sidebar:
+    with st.sidebar.container(key="block-navigation"):
         html(region_html("Navigation"))
-    if os.environ.get(READ_ONLY_ENV_VAR) != "1" and st.sidebar.button("Refresh Data", width="stretch"):
-        refresh_catalogue(config)
-    view_mode = st.sidebar.radio(
-        "View",
-        options=VIEWS,
-        index=VIEWS.index(VIEW_SLUGS.get(st.query_params.get(VIEW_PARAM, ""), TABLE_VIEW)),
-        help="The galaxy table, the statistical plots, or a search over the screened papers",
-    )
+        if os.environ.get(READ_ONLY_ENV_VAR) != "1" and st.button("Refresh Data", width="stretch"):
+            refresh_catalogue(config)
+        view_mode = st.radio(
+            "View",
+            options=VIEWS,
+            index=VIEWS.index(VIEW_SLUGS.get(st.query_params.get(VIEW_PARAM, ""), TABLE_VIEW)),
+            help="The galaxy table, the statistical plots, or a search over the screened papers",
+        )
     facet_area = st.sidebar.container()
-    with st.sidebar:
+    with st.sidebar.container(key="block-filters"):
         html(region_html("Catalogue filters"))
-    filtered = filter_catalogue(catalogue, *sidebar_filters(catalogue))
-    with st.sidebar:
+        filtered = filter_catalogue(catalogue, *sidebar_filters(catalogue))
         html(status_html(f"{len(filtered):,} of {len(catalogue):,} galaxies"))
-    st.sidebar.download_button(
-        label="Download filtered CSV",
-        data=filtered.to_csv(index=False).encode("utf-8"),
-        file_name="filtered_udg_database.csv",
-        mime="text/csv",
-        width="stretch",
-    )
+        st.download_button(
+            label="Download filtered CSV",
+            data=filtered.to_csv(index=False).encode("utf-8"),
+            file_name="filtered_udg_database.csv",
+            mime="text/csv",
+            width="stretch",
+        )
 
+    with header:
+        html(nav_html([(label, slug) for slug, label in VIEW_SLUGS.items()], view_mode, datetime.now().astimezone()))
+    html(breadcrumb_html([SITE_NAME, VIEW_SECTIONS[view_mode], view_mode]))
     if view_mode == PAPERS_VIEW:
         render_papers(config, catalogue, filtered, facet_area)
-        return
-    render_map(filtered)
-    st.divider()
-    if filtered.empty:
-        html(quiet_html("No galaxy matches the catalogue filters. Widen them in the sidebar."))
-    elif view_mode == TABLE_VIEW:
-        render_table(filtered)
     else:
-        render_analytics(filtered)
-
+        if not filtered.empty:
+            render_index(filtered)
+        render_map(filtered)
+        if filtered.empty:
+            html(quiet_html("No galaxy matches the catalogue filters. Widen them in the sidebar."))
+        elif view_mode == TABLE_VIEW:
+            render_table(filtered)
+        else:
+            render_analytics(filtered)
+    render_stats(config, catalogue, filtered)
 
 main()

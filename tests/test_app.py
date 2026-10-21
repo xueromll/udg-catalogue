@@ -114,7 +114,12 @@ def test_dashboard_renders_every_view_of_the_committed_catalogue():
     assert app.title[0].value == "Ultra-Diffuse Galaxies (UDG) Research Dashboard"
     assert len(app.dataframe) == 1
     assert len(app.get("html")) == 1
-    assert "1,927 galaxies in the catalogue" in rendered_markdown(app)
+    rendered = rendered_markdown(app)
+    assert "1,927 galaxies in the catalogue" in rendered
+    assert '<span class="udg-crumb udg-crumb-here">Data Table</span>' in rendered
+    assert "the current selection shows 1,927." in rendered
+    assert '<table class="udg-forumline">' in rendered and "It is currently" in rendered
+    assert "powered by sci-etl-core" in rendered
 
     for option in ("Cluster ID", "Distance (Mpc)", "Completeness (%)"):
         color_selector(app).set_value(option).run()

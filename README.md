@@ -375,6 +375,7 @@ The second command should print a path inside your sci-etl-core checkout. An edi
 
 ## Dashboard Features
 
+* **Board Layout.** Laid out like a classic forum: a site header with a nav strip, a breadcrumb, a board index of the largest constellations and clusters in the selection, each section in a ruled board under an ink category bar, and a statistics box with quality flags, record holders and the last build at the foot of every page.
 * **3D Interactive Map.** Explore the 1,048 galaxies that have a sky position and distance, colour-coded by:
   * Dark Matter Fraction
   * Completeness (%)

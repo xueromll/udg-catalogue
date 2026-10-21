@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Board layout.** The dashboard is laid out as a classic bulletin board in the same slate colours: a ruled site header with the catalogue size, a nav strip with a link per page and the time, a breadcrumb, a board index listing the selection's eight largest constellations and clusters with their galaxies, confirmed and mapped counts and nearest mapped galaxy, every section in a ruled board under an ink category bar, the sidebar's navigation, filters and facets as boards of their own, paper search hits as striped topic rows, and on every page a statistics box (quality flags, mapped count and median distance, the largest and most massive galaxy, the last build) with a legend, and a footer with the versions. Type is Verdana, corners are square, and Inter is no longer loaded.
+
 ## [1.0.0] - 2026-10-21
 
 First versioned release, on the released sci-etl-core 0.7.0.

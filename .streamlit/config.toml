@@ -1,6 +1,6 @@
-# Slate theme:
+# Slate theme, laid out as an early-2000s bulletin board:
 # canvas 60 %, type and borders 30 %, one accent for the selection class only.
-# What this file cannot express (mono chips and ids, the 1 px banner, dimmed rows)
+# What this file cannot express (category bars, ruled boards, row stripes, mono chips and ids)
 # lives in udg_catalogue/ui/theme.py.
 
 [browser]
@@ -21,15 +21,15 @@ codeBackgroundColor = "#E2E5EA"
 codeTextColor = "#334155"
 showWidgetBorder = true
 showSidebarBorder = true
-baseRadius = "2px"
-buttonRadius = "2px"
+baseRadius = "0px"
+buttonRadius = "0px"
 baseFontSize = 14
-font = "Inter, -apple-system, Segoe UI, Roboto, system-ui, sans-serif"
-headingFont = "Inter, -apple-system, Segoe UI, Roboto, system-ui, sans-serif"
+font = "Verdana, Tahoma, DejaVu Sans, Segoe UI, sans-serif"
+headingFont = "Verdana, Tahoma, DejaVu Sans, Segoe UI, sans-serif"
 codeFont = "JetBrains Mono, IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
 codeFontSize = "12px"
 headingFontSizes = ["20px", "16px", "14px", "14px", "14px", "14px"]
-headingFontWeights = [600, 600, 600, 600, 600, 600]
+headingFontWeights = [700, 700, 700, 700, 700, 700]
 # Data colours, mirrored from udg_catalogue/ui/tokens.py: the Okabe-Ito order for
 # identity and ten Viridis steps for a measure.
 chartCategoricalColors = ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9"]
