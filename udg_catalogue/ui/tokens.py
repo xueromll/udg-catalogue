@@ -1,7 +1,6 @@
-"""Design tokens of the slate visual system, as the desk brief fixes them.
+"""Design tokens of the slate visual system.
 
-Values are copied from ``sci-etl-internal/ecosystem/ui/02-pure-python-native.md``,
-section 6. Everything that draws a colour, a font or a size reads it from here.
+Everything that draws a colour, a font or a size reads it from here.
 """
 
 from __future__ import annotations

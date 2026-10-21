@@ -19,7 +19,6 @@ data/*
 output/
 
 # Local scratch files
-apply_docs_fixes.sh
 code.txt
 *.mp4
 /correlation_heatmap.png
@@ -31,5 +30,3 @@ code.txt
 /*.html
 /udg_database.csv
 /udg_database.csv.bak
-
-.patches/

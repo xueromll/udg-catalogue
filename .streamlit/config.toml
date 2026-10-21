@@ -1,4 +1,4 @@
-# Slate theme of the sci-etl desk brief (sci-etl-internal/ecosystem/ui/00-shared-brief.md):
+# Slate theme:
 # canvas 60 %, type and borders 30 %, one accent for the selection class only.
 # What this file cannot express (mono chips and ids, the 1 px banner, dimmed rows)
 # lives in udg_catalogue/ui/theme.py.

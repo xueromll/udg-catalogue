@@ -85,7 +85,7 @@ def chips_html(chips: Sequence[Chip]) -> str:
 
 
 def status_line(result: DiscoveryResult, mode: str) -> str:
-    """``total_matched`` and ``elapsed_ms`` as the brief shows them; meaning-only searches count what they return."""
+    """``total_matched`` and ``elapsed_ms`` for the status line; meaning-only searches count what they return."""
     if mode == "semantic":
         return f"{len(result.hits)} nearest passages · {result.elapsed_ms:.0f} ms"
     return f"{result.total_matched:,} matched · {len(result.hits)} shown · {result.elapsed_ms:.0f} ms"

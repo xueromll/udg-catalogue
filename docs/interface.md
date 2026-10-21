@@ -1,11 +1,10 @@
 # The dashboard interface
 
-The Streamlit dashboard mirrors the desk layout of the sci-etl ecosystem's UI
-brief: a query bar with chips, a result list, a graph canvas and an inspector
-on one screen, facets in the sidebar, and a persistent banner for anything the
-library could not do. This page says what maps to what, what Streamlit cannot
-honour from the brief, and which tokens the theme uses. The desktop
-application, sci-etl desk, is the stack that will honour the rest.
+The paper search page puts a query bar with chips, a result list, a graph
+canvas and an inspector on one screen, with facets in the sidebar and a
+persistent banner for anything the library could not do. This page says what
+maps to what, what the Streamlit version does not do, and which tokens the
+theme uses.
 
 Run it with `streamlit run app.py`. The paper search page needs the paper
 index (`python main.py --index-papers`); the table, map and analytics pages
@@ -61,9 +60,9 @@ secondary colour at 40 %. `L1 S3` are `FusedHit.lexical_rank` and
 `semantic_rank`, `-` when a leg did not return the hit; the last number is the
 fused score, shown raw because it is comparable only within one result list.
 
-## Region to brief mapping
+## Regions
 
-| Brief | Here | Binds to |
+| Region | Here | Binds to |
 |---|---|---|
 | Query bar, mono, mode selector | `st.text_input` (`query-bar`, mono via CSS) and a `Match by` selectbox | `PaperLibrary.search(query, mode=...)`; a `SearchQueryError` shows its column |
 | Chip bar | `ui.chips.query_chips`, rendered as inline spans; negated chips struck through in the secondary colour, group depth as a thicker left rule, the operator in the tooltip | `DiscoveryResult.chips` |
@@ -88,7 +87,7 @@ later hit selection.
 `&paper=<arXiv id>` selects that paper and centres the graph on it.
 `?view=analytics` and `?view=table` open the other pages.
 
-## What Streamlit cannot do from the brief
+## What the Streamlit version does not do
 
 - **Keyboard.** `/`, `j`/`k`, `Enter`, `Esc` and `g` have no counterpart.
   Streamlit widgets take focus through the browser only, and a page has no
@@ -96,15 +95,13 @@ later hit selection.
   Streamlit 1.63's `st.button(shortcut=...)` is not used because it binds
   one key per button, not a cursor over a list.
 - **Lasso and multi-select.** `st.plotly_chart` returns box and lasso
-  selections, but the inspector binds to one record and the claim
-  disagreement table of the brief needs a claim store this repository does
-  not have. The canvas therefore takes `selection_mode="points"` only.
+  selections, but the inspector binds to one record and comparing
+  claims across papers needs a claim store this repository does not have. The canvas therefore takes `selection_mode="points"` only.
 - **Shift-click to pin.** Plotly click events carry no modifier keys.
-- **10^5 nodes.** The canvas draws the library's discovery graph, at most
+- **Large graphs.** The canvas draws the library's discovery graph, at most
   `search.graph.max_nodes` (80 in `config.yaml`) nodes, laid out with the
-  O(n²) NumPy spring layout of `paper_views.spring_layout`. The whole
-  workspace graph, the cached layout and the 60 fps budget are the desktop
-  application's.
+  O(n²) NumPy spring layout of `paper_views.spring_layout`. It does not draw
+  every indexed paper at once.
 - **Claims with evidence spans.** The pipeline writes galaxies and
   rejections, not `Claim` records, so the inspector shows the catalogue rows
   and the rejected extractions instead of claims and evidence.
@@ -116,10 +113,6 @@ later hit selection.
 - **Fonts.** Inter and JetBrains Mono load from Google Fonts when the
   browser is online, with the system sans and mono as fallbacks; the
   application itself makes no network call.
-
-The desktop application adds the keyboard model, lasso and pinning, the
-workspace-wide graph with a cached layout, claims with evidence highlighting,
-and a workspace picker.
 
 ## Theme tokens
 

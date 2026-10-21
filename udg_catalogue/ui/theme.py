@@ -1,7 +1,7 @@
 """The CSS block for what Streamlit's theme file cannot express.
 
 ``.streamlit/config.toml`` carries the palette, the fonts and the 2 px radius.
-This block adds the rest of the brief: mono for chips, identifiers and the
+This block adds the rest: mono for chips, identifiers and the
 query bar, the persistent banner, 1 px borders without shadows, dimmed rows and
 the quiet empty states. It is the only CSS in the app, and the only external
 resource it loads is Google Fonts for Inter and JetBrains Mono, with system
