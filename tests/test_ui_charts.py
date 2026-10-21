@@ -119,6 +119,16 @@ def test_pull_in_outliers_pins_far_points_to_the_quantile_radius_and_keeps_their
     assert list(trace.z) == [0.0, 0.0, 0.0, 0.0]
 
 
+def test_pull_in_outliers_leaves_empty_figures_and_points_at_the_origin_alone():
+    empty = go.Figure(go.Scatter3d(x=[], y=[], z=[]))
+    charts.pull_in_outliers(empty)
+    assert list(empty.data[0].x) == []
+
+    origin = go.Figure(go.Scatter3d(x=[0.0, 0.0], y=[0.0, 0.0], z=[0.0, 0.0]))
+    charts.pull_in_outliers(origin)
+    assert list(origin.data[0].x) == [0.0, 0.0]
+
+
 def test_px_discrete_figures_colour_the_six_largest_groups_and_fold_the_rest_off_the_legend():
     frame = pd.DataFrame({"x": range(9), "y": range(9), "z": range(9), "c": ["big", "big", *(str(i) for i in range(7))]})
     figure = px.scatter_3d(frame, x="x", y="y", z="z", color="c")
