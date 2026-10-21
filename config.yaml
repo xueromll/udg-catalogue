@@ -13,8 +13,17 @@ full_text:
   max_concurrency: 4
 
 pipeline:
-  search_query: "cat:astro-ph.GA AND abs:ultra-diffuse"
-  total_limit: 500
+  # Quoted phrases, since arXiv splits an unquoted ultra-diffuse into two words and matched
+  # unrelated papers; "ultra-diffuse" also matches "ultra diffuse". The acronym and the
+  # well-known UDGs need astro-ph, as UDG is also a computer-science term (unit disk graph).
+  search_query: >-
+    cat:astro-ph* AND (ti:"ultra-diffuse" OR abs:"ultra-diffuse"
+    OR ti:ultradiffuse OR abs:ultradiffuse OR ti:UDG OR abs:UDG OR ti:UDGs OR abs:UDGs
+    OR ti:SMUDGes OR abs:SMUDGes
+    OR ti:"NGC1052-DF2" OR abs:"NGC1052-DF2" OR ti:"NGC 1052-DF2" OR abs:"NGC 1052-DF2"
+    OR ti:"NGC1052-DF4" OR abs:"NGC1052-DF4" OR ti:"NGC 1052-DF4" OR abs:"NGC 1052-DF4"
+    OR ti:"Dragonfly 44" OR abs:"Dragonfly 44")
+  total_limit: 2000
   page_size: 100
   search_delay: 3.0
   sleep_between: 5.0
@@ -48,8 +57,10 @@ search_index:
   cache_size_mb: 64
   mmap_size_mb: null
 
+# Embedding prescreen ahead of the LLM relevance check (cascading filter). On the 462
+# listings of the search query, every UDG paper scored at least 0.46 against the concepts.
 prescreen:
-  enabled: false
+  enabled: true
   threshold: 0.35
 
 search:

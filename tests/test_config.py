@@ -29,13 +29,14 @@ def test_repository_config_loads_with_project_relative_paths(monkeypatch):
 
     assert config.llm.api_key.get_secret_value() == "sk-from-environment"
     assert config.llm.base_url == "https://api.deepseek.com"
-    assert config.pipeline.search_query == "cat:astro-ph.GA AND abs:ultra-diffuse"
-    assert config.pipeline.total_limit == 500
+    assert config.pipeline.search_query.startswith('cat:astro-ph* AND (ti:"ultra-diffuse" OR abs:"ultra-diffuse"')
+    assert "\n" not in config.pipeline.search_query
+    assert config.pipeline.total_limit == 2000
     assert config.pipeline.max_concurrency == 6
     assert config.pipeline.newest_first
     assert config.embeddings.provider == "local"
     assert config.search_index == SearchIndexConfig(cache_size_mb=64, mmap_size_mb=None)
-    assert config.prescreen == PrescreenConfig(enabled=False, threshold=0.35)
+    assert config.prescreen == PrescreenConfig(enabled=True, threshold=0.35)
     assert config.paths.raw_catalogue == PROJECT_ROOT / "data" / "udg_database.csv"
     assert config.paths.processed_ids == PROJECT_ROOT / "data" / "processed_arxiv_ids.txt"
     assert config.paths.search_index == PROJECT_ROOT / "data" / "paper_index.db"

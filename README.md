@@ -11,7 +11,7 @@
 
 </div>
 
-> **An automated pipeline that screens astrophysics papers on arXiv and extracts measurements of ultra-diffuse galaxies (UDGs) with DeepSeek V4-Flash. It publishes the results as a cross-matched catalogue of 1,927 objects, explorable through an interactive 3D map and a Streamlit dashboard.**
+> **An automated pipeline that screens astrophysics papers on arXiv and extracts measurements of ultra-diffuse galaxies (UDGs) with DeepSeek V4-Flash. It publishes the results as a cross-matched catalogue of 977 objects, explorable through an interactive 3D map and a Streamlit dashboard.**
 >
 > Every relevant paper is also kept in a local paper memory, so the dashboard can search the literature by keyword and by meaning, find the papers that mention a catalogued galaxy, and grow a graph of related papers.
 >
@@ -57,26 +57,26 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 
 | Metric | Value |
 |--------|-------|
-| **arXiv submissions screened** | 557 |
-| **Unique galaxies catalogued** | 1,927 |
-| **Objects with all six parameters (`Confirmed`)** | 90 (4.7%) |
-| **Objects with sky position and distance (3D map)** | 1,048 |
-| **3D spatial groups (DBSCAN)** | 78 |
-| **IAU constellations represented** | 44 |
+| **arXiv submissions screened** | 462 |
+| **Unique galaxies catalogued** | 977 |
+| **Objects with all six parameters (`Confirmed`)** | 21 (2.1%) |
+| **Objects with sky position and distance (3D map)** | 502 |
+| **3D spatial groups (DBSCAN)** | 36 |
+| **IAU constellations represented** | 39 |
 | **Median record completeness** | 66.7% |
-| **Literature snapshot** | 2026-09-24 |
-| **Total API cost (five full runs)** | US$4.32 |
+| **Literature snapshot** | 2026-10-21 |
+| **LLM tokens (2026-10-21 rebuild)** | 6.8 million |
 | **ETL framework** | sci-etl-core 0.7 |
 
 ### Parameter coverage
 
 | Parameter | Column | Unit | Objects | Coverage | Median |
 |---|---|---|---:|---:|---:|
-| Right ascension, declination (ICRS) | `ra`, `dec` | deg | 1,469 | 76.2% | — |
-| Distance | `distance_mpc` | Mpc | 1,345 | 69.8% | 53.0 |
-| Effective radius | `effective_radius_kpc` | kpc | 1,526 | 79.2% | 1.86 |
-| Stellar mass | `stellar_mass_solar` | M☉ | 915 | 47.5% | 6.4 × 10⁷ |
-| Dark-matter fraction | `dark_matter_fraction` | — | 97 | 5.0% | 0.89 |
+| Right ascension, declination (ICRS) | `ra`, `dec` | deg | 776 | 79.4% | — |
+| Distance | `distance_mpc` | Mpc | 618 | 63.3% | 72.3 |
+| Effective radius | `effective_radius_kpc` | kpc | 728 | 74.5% | 2.10 |
+| Stellar mass | `stellar_mass_solar` | M☉ | 391 | 40.0% | 8.3 × 10⁷ |
+| Dark-matter fraction | `dark_matter_fraction` | — | 29 | 3.0% | 0.94 |
 
 ---
 
@@ -84,8 +84,10 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 
 ```mermaid
 flowchart LR
-    A["arXiv query<br/>astro-ph.GA, abs: ultra-diffuse"] --> B{"LLM relevance screen<br/>title + abstract"}
-    B -- "simulation or theory" --> X["Recorded as screened"]
+    A["arXiv query<br/>astro-ph, UDG phrases and names"] --> P{"Embedding prescreen<br/>title + abstract"}
+    P -- "unlike every concept" --> X
+    P -- "similar" --> B{"LLM relevance screen<br/>title + abstract"}
+    B -- "no observed UDG measured" --> X["Recorded as screened"]
     B -- "observational" --> C["Full text<br/>LaTeX, then PDF, then abstract"]
     C --> M["Paper memory<br/>search index + embeddings"]
     M --> S["Paper search and<br/>discovery graphs"]
@@ -99,7 +101,7 @@ flowchart LR
 
 | Stage | What happens | Code |
 |---|---|---|
-| **Screening** | The query `cat:astro-ph.GA AND abs:ultra-diffuse` is paged from the newest submission. The LLM keeps papers with new observational UDG measurements. Every screened ID is saved and never screened again. | [pipeline.py](udg_catalogue/pipeline.py), [prompts.py](udg_catalogue/prompts.py) |
+| **Screening** | The query is paged from the newest submission. It matches astro-ph papers whose title or abstract contains the phrase "ultra-diffuse" (which also matches "ultra diffuse"), "ultradiffuse", "UDG(s)", "SMUDGes", or the names NGC 1052-DF2, NGC 1052-DF4 and Dragonfly 44, which many papers on those UDGs use without saying "ultra-diffuse". The phrase is quoted because arXiv splits an unquoted `ultra-diffuse` into two words, which matched unrelated papers on diffuse radio emission or interstellar ices. An embedding prescreen first drops listings unlike every UDG concept, then the LLM keeps papers that measure specific observed UDGs, new or re-analysed, and rejects simulations, model fits to published values, and papers that mention UDGs only in passing. Every screened ID is saved and never screened again. | [pipeline.py](udg_catalogue/pipeline.py), [prompts.py](udg_catalogue/prompts.py) |
 | **Paper memory** | Each relevant paper's title, abstract, full text, authors, categories and year go into a keyword index (`paper_index.db`). The full text is also split into 350-word passages and embedded into `paper_memory.db`. A failure here is logged and never costs the paper its extraction. | [literature.py](udg_catalogue/literature.py) |
 | **Extraction** | For each object the paper classifies as a UDG or UDG candidate, the LLM returns `galaxy_name`, `ra`, `dec`, `distance_mpc`, `effective_radius_kpc`, `stellar_mass_solar` and `dark_matter_fraction`. The prompt fixes the units: ICRS decimal degrees, with sexagesimal positions converted; Mpc; physical kpc, never converted from an angle; and solar masses, converted from logarithms. Percentages become fractions, only central values are kept, and values the paper doesn't report, limits included, are `null`. | [prompts.py](udg_catalogue/prompts.py) |
 | **Validation** | A record is rejected if its name is missing, contains a simulation keyword as a whole word (e.g. `tng`, `mock`, `toy`), or only identifies the object within its paper, such as `4692`, `ID 4692`, `No. 12`, `Object 3`, `source 7` or `# 5`. It is also rejected if a value falls outside its physical range: RA in [0°, 360°], Dec in [−90°, 90°], distance in (0, 10⁴] Mpc, effective radius in (0, 100] kpc, stellar mass in (0, 10¹²] M☉ and dark-matter fraction in [0, 1]. Out-of-range values are rejected, not clipped, because a value such as a dark-matter fraction of 96 usually means the paper was misread. Finally, a record needs at least one physical measurement or both RA and Dec. Each rejected galaxy is logged with its reason and stored in `data/rejected_galaxies.db` with a rule code (`no-name`, `paper-local-name`, `simulation-keyword`, `not-a-number`, `not-positive`, `out-of-range` or `no-measurement`); see [Reviewing Rejected Galaxies](#reviewing-rejected-galaxies). Accepted galaxies are appended to `udg_database.csv` with the paper's arXiv id in `record_id`; a paper that is extracted again replaces its own rows. | [validation.py](udg_catalogue/validation.py), [pipeline.py](udg_catalogue/pipeline.py) |
@@ -149,11 +151,8 @@ Values are extracted automatically, so check them against the original papers be
 - **No UDG definition imposed.** The catalogue takes each paper's classification as given and applies no size or surface-brightness cut, such as $R_\mathrm{e} \geq 1.5$ kpc and $\mu_{0,g} \geq 24$ mag arcsec⁻² ([van Dokkum et al. 2015](https://doi.org/10.1088/2041-8205/798/2/L45)).
 - **Spatial groups are not bound structures.** With `min_samples = 2`, any two objects within 5 Mpc form a group, and distance errors are often of that size.
 - **Remaining duplicates.** Name variants outside the normalisation rules (e.g. `N1052-DF2` and `NGC 1052-DF2`) are merged only when both records have coordinates.
-- **Paper-local names and clipped values in the committed catalogue.** The catalogue committed on 2026-09-24 predates the rules above. It holds 282 names that are bare integers and 40 of the form `ID n`, `No. n`, `Object n`, `source n` or `# n`, whose values may come from different papers that reused the same number, and its dark-matter fractions were clipped to [0, 1], so the 8 values of exactly 0 and 6 of exactly 1 may be clipped errors. The next rebuild drops them.
-- **Objects that are not UDGs in the committed catalogue.** It was extracted before the prompt limited extraction to the objects a paper classifies as UDGs, and it includes, for example, the ultra-compact dwarf `NGC 7531-UCD1` (effective radius 0.014 kpc) and the galaxy cluster `Abell 1697` (stellar mass 1.3×10¹³ M☉). The next rebuild drops them.
-- **No `source_papers` in the committed catalogue.** The catalogue committed on 2026-09-24 was built before rows named their paper, so it has no `source_papers` column and no run manifest. The next rebuild adds both.
-- **Duplicates in the committed catalogue.** The catalogue committed on 2026-09-24 was built before sky matching merged exact duplicates and groups of three or more. It still holds 124 pairs of rows within 3″ of each other, which the next rebuild merges.
-- **Checks on the committed catalogue.** `tests/test_published_catalogue.py` checks the committed catalogue against these rules: no two galaxies within 3″, no paper-local names, every value within its physical range, and no dark-matter fraction of exactly 0 or 1. The catalogue committed on 2026-09-24 fails them, and the checks are marked as expected failures until the next rebuild passes them.
+- **Dark-matter fractions on a bound.** The catalogue rebuilt on 2026-10-21 holds 3 dark-matter fractions of exactly 0 and 5 of exactly 1. The zeros include NGC 1052-DF2 and NGC 1052-DF4, which papers report as lacking dark matter, but a bound can also be a misread limit, so check these against their papers.
+- **Checks on the committed catalogue.** `tests/test_published_catalogue.py` checks the committed catalogue against these rules: no two galaxies within 3″, no paper-local names, every value within its physical range, and no dark-matter fraction of exactly 0 or 1. The catalogue rebuilt on 2026-10-21 passes the first three; the last is marked as an expected failure until a rebuild passes it.
 - **Not exactly reproducible.** LLM output varies between runs, so a rebuild gives a similar catalogue, not an identical file.
 
 ---
@@ -269,8 +268,8 @@ The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing, or `
 
 | Key in `config.yaml` | Default | Purpose |
 |---|---|---|
-| `pipeline.search_query` | `cat:astro-ph.GA AND abs:ultra-diffuse` | arXiv selection query |
-| `pipeline.total_limit` | `500` | Relevant papers read in full per run |
+| `pipeline.search_query` | `cat:astro-ph* AND (ti:"ultra-diffuse" OR abs:"ultra-diffuse" OR …)` | arXiv selection query (see [config.yaml](config.yaml) for the whole query) |
+| `pipeline.total_limit` | `2000` | Relevant papers read in full per run |
 | `pipeline.max_concurrency` | `6` | Papers processed concurrently |
 | `pipeline.newest_first` | `true` | Stop at the papers the last run saw first, then resume from the saved offset |
 | `embeddings.enabled` | `true` | Embed passages for search by meaning; `false` keeps keyword search only |
@@ -280,15 +279,15 @@ The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing, or `
 | `search.graph.depth` / `search.graph.fanout` / `search.graph.max_nodes` | `2` / `8` / `80` | How far and how wide a discovery graph grows |
 | `search.graph.min_weight` | `0.35` | Weakest link kept in a discovery graph |
 | `search_index.cache_size_mb` / `search_index.mmap_size_mb` | `64` / `null` | Page cache and memory map of the SQLite text index; `null` keeps SQLite's default |
-| `prescreen.enabled` | `false` | Run the embedding prescreen before the DeepSeek relevance check (see below) |
-| `prescreen.threshold` / `prescreen.concepts` | `0.35` / three UDG observation concepts | Lowest cosine similarity to any concept that passes the prescreen |
+| `prescreen.enabled` | `true` | Run the embedding prescreen before the DeepSeek relevance check (see below) |
+| `prescreen.threshold` / `prescreen.concepts` | `0.35` / six UDG observation concepts | Lowest cosine similarity to any concept that passes the prescreen |
 | `http.max_retries` / `http.backoff_factor` | `4` / `5.0` | Retry policy for arXiv requests |
 | `full_text.max_concurrency` | `4` | arXiv requests in flight at once, listing and full text together, however many papers `pipeline.max_concurrency` processes |
 | `deduplication.max_separation_arcsec` | `3.0` | Sky-matching radius |
 | `clustering.max_distance_mpc` | `5.0` | DBSCAN `eps` |
 | `clustering.min_samples` | `2` | DBSCAN `min_samples` |
 
-`prescreen.enabled` puts an embedding filter in front of the DeepSeek relevance check. Each listing's title and abstract is embedded with the configured embeddings provider and compared with `prescreen.concepts`; a paper below `prescreen.threshold` against every concept is judged not relevant without an LLM call and marked processed, like any other irrelevant paper, and a paper whose embedding fails goes to DeepSeek as before. It is off by default because it can reject a paper the model would have kept, which changes what the catalogue screens, and it requires `embeddings.enabled`. Cost effect: with the `local` provider the prescreen itself costs nothing, and every rejection saves one relevance call, the relevance prompt plus the title and abstract, a few hundred input tokens; with the `openai` provider every listing costs one embedding call instead, so the prescreen pays only when it rejects a large share of the listing. An active prescreen is logged as a warning at the start of the run.
+`prescreen.enabled` puts an embedding filter in front of the DeepSeek relevance check. Each listing's title and abstract is embedded with the configured embeddings provider and compared with `prescreen.concepts`; a paper below `prescreen.threshold` against every concept is judged not relevant without an LLM call and marked processed, like any other irrelevant paper, and a paper whose embedding fails goes to DeepSeek as before. It is off in the code's defaults because it can reject a paper the model would have kept, which changes what the catalogue screens, and it requires `embeddings.enabled`; the repository's `config.yaml` turns it on. Its threshold was checked against the 462 listings the search query matched on 2026-10-21: every UDG paper scored at least 0.46 against the concepts with `all-MiniLM-L6-v2`, and only an unrelated solar-corona paper fell below 0.35. Check again after changing the concepts, the embedding model or the query. Cost effect: with the `local` provider the prescreen itself costs nothing, and every rejection saves one relevance call, the relevance prompt plus the title and abstract, a few hundred input tokens; with the `openai` provider every listing costs one embedding call instead, so the prescreen pays only when it rejects a large share of the listing. An active prescreen is logged as a warning at the start of the run.
 
 Every section rejects keys it does not declare, and the error names the key, so a typo fails at startup instead of being ignored. Configuration written for sci-etl-core 0.2 used `pipeline.max_records` and `pipeline.max_workers`; rename them `pipeline.total_limit` and `pipeline.max_concurrency`.
 
@@ -306,7 +305,7 @@ The default `local` embeddings provider downloads the `all-MiniLM-L6-v2` model (
 
 ### Rebuilding the Catalogue From Scratch
 
-The committed catalogue was rebuilt from scratch on 2026-09-24 with sci-etl-core 0.4. Catalogues extracted before the migration could merge distinct galaxies that shared a catalogue number, such as `KDG 44` and `DF 44`, or `NGC 1052-DF2` and `NGC 1052-DF4`. The rebuilt catalogue keeps them apart. The pipeline never splits rows it has already merged, so rebuild again whenever the name-matching rules or the extraction prompt change. To rebuild, archive the raw data and state, then run the pipeline:
+The committed catalogue was rebuilt from scratch on 2026-10-21 with sci-etl-core 0.7, the first rebuild with per-paper rows, `source_papers`, the rejection store and the prompt that extracts only the objects a paper classifies as UDGs. It replaced the 1,927-galaxy catalogue of 2026-09-24, which still held non-UDG objects such as ultra-compact dwarfs and galaxy clusters, paper-local names and 124 pairs of rows within 3″. Catalogues extracted before the sci-etl-core 0.4 migration could merge distinct galaxies that shared a catalogue number, such as `KDG 44` and `DF 44`, or `NGC 1052-DF2` and `NGC 1052-DF4`. The rebuilt catalogue keeps them apart. The pipeline never splits rows it has already merged, so rebuild again whenever the name-matching rules or the extraction prompt change. To rebuild, archive the raw data and state, then run the pipeline:
 
 ```bash
 mkdir -p archive
@@ -317,7 +316,7 @@ python main.py --rescan --replace-catalogue
 
 The sorted catalogue is built from `udg_database.csv` alone, so the rebuild replaces the published rows instead of adding to them. `--replace-catalogue` lets it write a catalogue with fewer galaxies than the published one. A raw catalogue written before rows named their paper has no `record_id` column; post-processing refuses it and asks for a rebuild.
 
-A rebuild reprocesses every matching paper. The 2026-09-24 rebuild screened 557 submissions, read 312 relevant papers in full, and cost ¥11.51 (about US$1.71). Answers already in `data/llm_cache.db` cost nothing, so move it to `archive/` as well to get fresh answers from the model.
+A rebuild reprocesses every matching paper. The 2026-10-21 rebuild screened 462 submissions, read 323 relevant papers in full, and used 6.8 million LLM tokens. Answers already in `data/llm_cache.db` cost nothing, so move it to `archive/` as well to get fresh answers from the model.
 
 ### Reviewing Rejected Galaxies
 

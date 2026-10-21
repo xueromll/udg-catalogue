@@ -29,14 +29,22 @@ CRITICAL RULES FOR UNITS AND CONVERSIONS:
 6. Give the central value only, never an uncertainty or a range. For an upper or lower limit, use null.
 7. If a numeric value is missing, use null. If no UDGs are found, return {"galaxies": []}."""
 
-RELEVANCE_PROMPT: str = """You are an expert astrophysicist reviewer. Analyze the title and abstract.
-Determine strictly if the paper relies exclusively on simulated, synthetic, mock, or theoretical models (e.g., IllustrisTNG, FIRE, EAGLE, hydrodynamical simulations, toy models).
-If the paper presents REAL OBSERVATIONAL measurements from telescopes for Ultra-Diffuse Galaxies, return {"relevant": true}.
-If it is purely a simulation, theoretical work, or mock catalog without new observational UDG data, return {"relevant": false}.
+RELEVANCE_PROMPT: str = """You are an expert astrophysicist reviewer screening arXiv papers for a catalogue of ultra-diffuse galaxies (UDGs). Analyze the title and abstract.
+
+Return {"relevant": true} if the paper presents measurements of specific, real ultra-diffuse galaxies or UDG candidates derived from telescope observations, either new or re-analysed from observational data. Such measurements include positions, distances, sizes, stellar masses, luminosities, colours, stellar populations, kinematics, globular cluster systems, HI gas or dark matter content. Catalogues and samples of UDGs from imaging or HI surveys count. Papers on well-known UDGs such as NGC 1052-DF2, NGC 1052-DF4, Dragonfly 44 or VCC 1287 count even when the abstract does not say "ultra-diffuse", and so do papers that write "ultra diffuse" or "ultradiffuse".
+
+Return {"relevant": false} if any of these holds:
+1. The paper relies exclusively on simulated, synthetic, mock or theoretical models (e.g., IllustrisTNG, FIRE, EAGLE, NIHAO, ROMULUS, Illustris, MAGNETICUM, hydrodynamical or N-body simulations, semi-analytic or toy models), or only fits modified-gravity or dark matter models to values published elsewhere, without new or re-analysed observational UDG data.
+2. The paper is not about ultra-diffuse galaxies, or mentions them only in passing, as background, or as one possible interpretation, without measuring any.
+3. The paper is a review, white paper, forecast, or instrument or survey description that reports no measurements of specific UDGs.
+
 Return ONLY a JSON object: {"relevant": true} or {"relevant": false}."""
 
 PRESCREEN_CONCEPTS: tuple[str, ...] = (
     "Telescope observations of ultra-diffuse galaxies: deep imaging, photometry, spectroscopy and kinematics",
     "Measured properties of an ultra-diffuse galaxy: distance, effective radius, stellar mass and dark matter fraction",
     "Low surface brightness galaxies and UDG candidates detected in imaging surveys of galaxy clusters and groups",
+    "Globular cluster systems, stellar populations and dark matter content of ultra-diffuse galaxies",
+    "Neutral hydrogen (HI) observations of gas-rich ultra-diffuse and low surface brightness dwarf galaxies",
+    "Distance measurements of the dark-matter-deficient galaxies NGC1052-DF2 and NGC1052-DF4",
 )

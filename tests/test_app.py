@@ -115,9 +115,9 @@ def test_dashboard_renders_every_view_of_the_committed_catalogue():
     assert len(app.dataframe) == 1
     assert len(app.get("html")) == 1
     rendered = rendered_markdown(app)
-    assert "1,927 galaxies in the catalogue" in rendered
+    assert "977 galaxies in the catalogue" in rendered
     assert '<span class="udg-crumb udg-crumb-here">Data Table</span>' in rendered
-    assert "the current selection shows 1,927." in rendered
+    assert "the current selection shows 977." in rendered
     assert '<table class="udg-forumline">' in rendered and "It is currently" in rendered
     assert "powered by sci-etl-core" in rendered
 
@@ -210,7 +210,7 @@ def test_selecting_a_hit_grows_the_graph_and_fills_the_inspector(indexed_project
     assert '<div class="udg-hit-selected">' in rendered
     assert '<a href="https://arxiv.org/abs/1606.06291">1606.06291</a>' in rendered
     assert "year 2016 · astro-ph.GA" in rendered
-    assert "predates the source_papers column" in rendered
+    assert app.dataframe[-1].value["galaxy_name"].tolist() == ["Dragonfly 44"]
     assert "no review store in this workspace" in rendered
     assert "no run manifest in this workspace" in rendered
     assert app.button(key="open-in-graph").disabled
@@ -316,13 +316,13 @@ def test_selecting_a_facet_requeries_and_shows_a_dashed_chip(indexed_project):
 def test_paper_search_looks_up_papers_mentioning_a_galaxy(indexed_project):
     app = open_paper_search(AppTest.from_file(str(APP_PATH), default_timeout=120))
 
-    labelled(app.selectbox, "Papers mentioning a galaxy").set_value("N1052-DF2").run()
+    labelled(app.selectbox, "Papers mentioning a galaxy").set_value("Dragonfly 44").run()
 
     assert not app.exception
-    assert labelled(app.text_input, "Search papers").value == '"N1052-DF2"'
+    assert labelled(app.text_input, "Search papers").value == '"Dragonfly 44"'
     rendered = rendered_markdown(app)
-    assert "A galaxy lacking dark matter" in rendered
-    assert "Dragonfly 44" not in rendered
+    assert "A high stellar velocity dispersion for Dragonfly 44" in rendered
+    assert "A galaxy lacking dark matter" not in rendered
 
 
 def test_paper_search_opens_from_query_parameters(indexed_project):
