@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "built_at": "2026-10-21T13:30:27.019020+00:00",
+  "built_at": "2026-10-21T14:21:28.036620+00:00",
   "software": {
     "sci-etl-core": "0.7.0",
     "udg-catalogue": "1.0.0"
@@ -11,7 +11,7 @@
   },
   "prompts": {
     "relevance_sha256": "1e73401bbce2c0933e755cd2083b2ac8e5c33fca6ec48c15cc81bee6ea12f016",
-    "extraction_sha256": "639366efea52e6b736ff39f58ed95aa753d7d889f259085f75c3a340c3ed5e88"
+    "extraction_sha256": "23cf9120c24d6df758e3e49097af422fc5aa0689af72c596d87d86c978c22725"
   },
   "query": "cat:astro-ph* AND (ti:\"ultra-diffuse\" OR abs:\"ultra-diffuse\" OR ti:ultradiffuse OR abs:ultradiffuse OR ti:UDG OR abs:UDG OR ti:UDGs OR abs:UDGs OR ti:SMUDGes OR abs:SMUDGes OR ti:\"NGC1052-DF2\" OR abs:\"NGC1052-DF2\" OR ti:\"NGC 1052-DF2\" OR abs:\"NGC 1052-DF2\" OR ti:\"NGC1052-DF4\" OR abs:\"NGC1052-DF4\" OR ti:\"NGC 1052-DF4\" OR abs:\"NGC 1052-DF4\" OR ti:\"Dragonfly 44\" OR abs:\"Dragonfly 44\")",
   "processed_arxiv_ids": [
@@ -479,11 +479,11 @@
     "2609.27432v1"
   ],
   "raw_catalogue": {
-    "rows": 1552,
-    "sha256": "8db2221db40678af3c6cedee0def95667b1e0bec91dc51ab6e43313d073734ac"
+    "rows": 1576,
+    "sha256": "e203f2083c71540fa7b98b13a8563120c415eff80ac562a0247ee1f9062bcb46"
   },
   "sorted_catalogue": {
-    "rows": 1012,
-    "sha256": "9a8eae5227be3c8c9086cce1ec6ec2c50d199a402a71d7bb71dc46787187c486"
+    "rows": 1031,
+    "sha256": "86f0b5539cf85424878f272d44081f9500d5e00193c30d9311af5a92277cb53a"
   }
 }
