@@ -21,10 +21,11 @@ from udg_catalogue.astrometry import (
     UNKNOWN_CONSTELLATION,
     CartesianDistanceFeatures,
     ConstellationStep,
+    NamesakeSplitStep,
     SkyPositionMatcher,
 )
 from udg_catalogue.config import KEY_COLUMN, MEASUREMENT_FIELDS, CatalogueConfig
-from udg_catalogue.naming import GalaxyNameNormalizer
+from udg_catalogue.naming import AliasKeyStep, GalaxyNameNormalizer
 
 NORMALIZED_KEY_COLUMN = "_norm_key"
 INTERNAL_COLUMN_PREFIX = "_"
@@ -78,15 +79,27 @@ class RawRowsStep(Processor):
 
 
 def build_catalogue_chain(config: CatalogueConfig, normalizer: KeyNormalizer | None = None) -> ProcessorChain:
-    """Merge the raw rows into one row per galaxy, listing the papers each galaxy's rows came from."""
+    """Merge the raw rows into one row per galaxy, listing the papers each galaxy's rows came from.
+
+    Rows match by name key, joined across aliases given in parentheses, and
+    split again where one key names galaxies in different parts of the sky.
+    """
+    normalizer = normalizer or GalaxyNameNormalizer()
+    deduplication = config.deduplication
     return ProcessorChain(
         [
             RawRowsStep(),
-            NormalizationStep(KEY_COLUMN, normalizer or GalaxyNameNormalizer(), NORMALIZED_KEY_COLUMN),
+            NormalizationStep(KEY_COLUMN, normalizer, NORMALIZED_KEY_COLUMN),
+            AliasKeyStep(KEY_COLUMN, NORMALIZED_KEY_COLUMN, normalizer),
+            NamesakeSplitStep(
+                NORMALIZED_KEY_COLUMN,
+                max_separation_arcmin=deduplication.namesake_separation_arcmin,
+                max_distance_ratio=deduplication.namesake_distance_ratio,
+            ),
             DeduplicationStep(
                 NORMALIZED_KEY_COLUMN,
                 matcher=SkyPositionMatcher(),
-                match_threshold=config.deduplication.max_separation_arcsec,
+                match_threshold=deduplication.max_separation_arcsec,
                 source_column=INTERNAL_COLUMN_PREFIX + RECORD_COLUMN,
                 sources_column=SOURCE_PAPERS_COLUMN,
             ),

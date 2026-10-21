@@ -5,12 +5,17 @@ llm:
 
 http:
   user_agent: "UDG-ResearchScript/1.0 (lanhua1122333@gmail.com)"
-  max_retries: 4
+  max_retries: 5
   backoff_factor: 5.0
   timeout: 25
 
-full_text:
-  max_concurrency: 4
+# arXiv asks for one request at a time, about 3 s apart. A 429 or 503 pauses every arXiv request,
+# for 60 s and then twice as long for each further one, up to 15 minutes.
+arxiv:
+  min_interval: 3.0
+  jitter: 2.0
+  cooldown: 60.0
+  max_cooldown: 900.0
 
 pipeline:
   # Quoted phrases, since arXiv splits an unquoted ultra-diffuse into two words and matched
@@ -25,9 +30,11 @@ pipeline:
     OR ti:"Dragonfly 44" OR abs:"Dragonfly 44")
   total_limit: 2000
   page_size: 100
-  search_delay: 3.0
+  search_delay: 0.0         # listing requests are paced by the arxiv section
   sleep_between: 5.0
-  max_concurrency: 6
+  # Papers in flight. arXiv requests are paced by the arxiv section whatever this is,
+  # so the rest is DeepSeek calls running in parallel with the downloads.
+  max_concurrency: 16
   newest_first: true
 
 paths:
@@ -45,6 +52,7 @@ paths:
   indexing_metadata: "data/indexing_meta.json"
   rejections: "data/rejected_galaxies.db"
   run_manifest: "data/run_manifest.json"
+  full_text_cache: "data/full_text"
 
 embeddings:
   enabled: true

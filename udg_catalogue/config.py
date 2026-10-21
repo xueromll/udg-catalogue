@@ -58,6 +58,7 @@ class PathsConfig(BaseModel):
     indexing_metadata: Path = Path("data/indexing_meta.json")
     rejections: Path = Path("data/rejected_galaxies.db")
     run_manifest: Path = Path("data/run_manifest.json")
+    full_text_cache: Path = Path("data/full_text")
 
     def anchored_at(self, root: Path) -> PathsConfig:
         return self.model_copy(update={name: root / value for name, value in self})
@@ -121,6 +122,23 @@ class PrescreenConfig(BaseModel):
     concepts: list[str] = Field(default_factory=lambda: list(PRESCREEN_CONCEPTS), min_length=1)
 
 
+class ArxivConfig(BaseModel):
+    """How the pipeline paces arXiv requests (``udg_catalogue.arxiv.PoliteRateLimiter``).
+
+    One request runs at a time, and each starts ``min_interval`` plus up to
+    ``jitter`` seconds after the previous one ended. A 429 or 503 pauses every
+    request for ``cooldown`` seconds, doubled for each further one, up to
+    ``max_cooldown``.
+    """
+
+    model_config = _STRICT
+
+    min_interval: float = Field(default=3.0, ge=0)
+    jitter: float = Field(default=2.0, ge=0)
+    cooldown: float = Field(default=60.0, ge=0)
+    max_cooldown: float = Field(default=900.0, ge=0)
+
+
 class ClusteringConfig(BaseModel):
     model_config = _STRICT
 
@@ -129,9 +147,13 @@ class ClusteringConfig(BaseModel):
 
 
 class DeduplicationConfig(BaseModel):
+    """Sky matching, and the split of rows that share a name but not a position (``NamesakeSplitStep``)."""
+
     model_config = _STRICT
 
     max_separation_arcsec: float = 3.0
+    namesake_separation_arcmin: float = Field(default=10.0, gt=0)
+    namesake_distance_ratio: float = Field(default=1.5, ge=1.0)
 
 
 class CatalogueConfig(BaseAppConfig):
@@ -143,6 +165,7 @@ class CatalogueConfig(BaseAppConfig):
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     search_index: SearchIndexConfig = Field(default_factory=SearchIndexConfig)
     prescreen: PrescreenConfig = Field(default_factory=PrescreenConfig)
+    arxiv: ArxivConfig = Field(default_factory=ArxivConfig)
     clustering: ClusteringConfig = Field(default_factory=ClusteringConfig)
     deduplication: DeduplicationConfig = Field(default_factory=DeduplicationConfig)
 

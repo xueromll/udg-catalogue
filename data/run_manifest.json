@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "built_at": "2026-10-21T12:42:23.934081+00:00",
+  "built_at": "2026-10-21T13:09:05.879262+00:00",
   "software": {
     "sci-etl-core": "0.6.0",
     "udg-catalogue": "1.0.0"
@@ -483,7 +483,7 @@
     "sha256": "8db2221db40678af3c6cedee0def95667b1e0bec91dc51ab6e43313d073734ac"
   },
   "sorted_catalogue": {
-    "rows": 977,
-    "sha256": "590ec1795e2f79b87611c17d8f8ed64e03baea9ce039f4219d2a0aa55fe8380a"
+    "rows": 1012,
+    "sha256": "9a8eae5227be3c8c9086cce1ec6ec2c50d199a402a71d7bb71dc46787187c486"
   }
 }

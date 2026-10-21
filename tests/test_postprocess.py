@@ -88,6 +88,30 @@ def test_catalogue_chain_derives_the_scientific_columns(catalogue_config):
     assert not any(column.startswith("_") or column == "record_id" for column in catalogue.columns)
 
 
+def test_catalogue_chain_matches_aliases_and_keeps_namesakes_in_different_fields_apart(catalogue_config):
+    raw = pd.DataFrame(
+        {
+            "record_id": ["p1", "p2", "p3", "p4", "p5", "p6", "p7"],
+            "galaxy_name": ["UDG 5", "UDG 5", "Dragonfly 44", "UDG-DF44", "DF2", "DF2 (RCP 29)", "DF2"],
+            "ra": [159.03, 234.39, 195.24, np.nan, 194.79, 40.445, np.nan],
+            "dec": [-27.32, 58.58, 26.98, np.nan, 29.007, -8.403, np.nan],
+            "distance_mpc": [51.0, 42.7, 100.0, np.nan, 100.0, 20.0, 22.1],
+            "effective_radius_kpc": [1.5, 2.0, 4.6, 4.7, 2.1, 2.2, np.nan],
+        }
+    )
+
+    catalogue = build_catalogue_chain(catalogue_config).process(raw)
+    papers = dict(zip(catalogue["source_papers"], catalogue["galaxy_name"], strict=True))
+
+    assert papers == {
+        "p1": "UDG 5",
+        "p2": "UDG 5",
+        "p3; p4": "Dragonfly 44",
+        "p5": "DF2",
+        "p6; p7": "DF2 (RCP 29)",
+    }
+
+
 def test_raw_rows_hide_the_paper_columns_and_read_measurements_as_numbers():
     raw = pd.DataFrame(
         {

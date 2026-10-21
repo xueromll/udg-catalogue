@@ -25,4 +25,5 @@ def ingestion_config(catalogue_config):
     pipeline = catalogue_config.pipeline.model_copy(
         update={"search_delay": 0.0, "sleep_between": 0.0, "page_size": 2, "total_limit": 10}
     )
-    return catalogue_config.model_copy(update={"pipeline": pipeline})
+    arxiv = catalogue_config.arxiv.model_copy(update={"min_interval": 0.0, "jitter": 0.0})
+    return catalogue_config.model_copy(update={"pipeline": pipeline, "arxiv": arxiv})

@@ -6,6 +6,7 @@ from sci_etl_core import ConfigurationError
 from sci_etl_core.search import SqliteTuning
 
 from udg_catalogue.config import (
+    ArxivConfig,
     API_KEY_ENV_VAR,
     DEFAULT_CONFIG_PATH,
     EMBEDDING_API_KEY_ENV_VAR,
@@ -32,7 +33,9 @@ def test_repository_config_loads_with_project_relative_paths(monkeypatch):
     assert config.pipeline.search_query.startswith('cat:astro-ph* AND (ti:"ultra-diffuse" OR abs:"ultra-diffuse"')
     assert "\n" not in config.pipeline.search_query
     assert config.pipeline.total_limit == 2000
-    assert config.pipeline.max_concurrency == 6
+    assert config.pipeline.max_concurrency == 16
+    assert config.arxiv == ArxivConfig(min_interval=3.0, jitter=2.0, cooldown=60.0, max_cooldown=900.0)
+    assert config.paths.full_text_cache == PROJECT_ROOT / "data" / "full_text"
     assert config.pipeline.newest_first
     assert config.embeddings.provider == "local"
     assert config.search_index == SearchIndexConfig(cache_size_mb=64, mmap_size_mb=None)
@@ -196,3 +199,5 @@ def test_defaults_match_previous_pipeline_settings():
     assert config.clustering.max_distance_mpc == 5.0
     assert config.clustering.min_samples == 2
     assert config.deduplication.max_separation_arcsec == 3.0
+    assert config.deduplication.namesake_separation_arcmin == 10.0
+    assert config.deduplication.namesake_distance_ratio == 1.5

@@ -6,6 +6,7 @@ from sci_etl_core.processors import ClusteringStep, DeduplicationStep
 from udg_catalogue.astrometry import (
     CartesianDistanceFeatures,
     ConstellationStep,
+    NamesakeSplitStep,
     SkyPositionMatcher,
     cartesian_coordinates,
     cross_match_catalogues,
@@ -154,3 +155,87 @@ def test_cross_match_with_empty_reference_returns_empty_frame():
 
     assert matched.empty
     assert {"separation_arcsec", "matched_with_ref"}.issubset(matched.columns)
+
+
+def namesakes(**columns):
+    return pd.DataFrame({"_norm_key": ["udg5"] * len(next(iter(columns.values()))), **columns})
+
+
+def test_namesakes_in_different_fields_become_different_galaxies():
+    frame = namesakes(
+        ra=[159.03, 234.39, 159.0301],
+        dec=[-27.32, 58.58, -27.3201],
+        distance_mpc=[51.0, 42.7, 51.0],
+    )
+
+    assert NamesakeSplitStep("_norm_key").process(frame)["_norm_key"].tolist() == ["udg5", "udg5#1", "udg5"]
+
+
+def test_a_namesake_without_a_position_joins_the_galaxy_its_distance_agrees_with():
+    frame = namesakes(
+        ra=[194.79, 40.445, np.nan, np.nan],
+        dec=[29.007, -8.403, np.nan, np.nan],
+        distance_mpc=[100.0, 20.0, 22.1, 98.0],
+    )
+
+    assert NamesakeSplitStep("_norm_key").process(frame)["_norm_key"].tolist() == ["udg5", "udg5#1", "udg5#1", "udg5"]
+
+
+def test_the_closest_agreeing_distance_wins_over_a_galaxy_without_a_distance():
+    frame = namesakes(
+        ra=[10.0, 50.0, 90.0, np.nan],
+        dec=[0.0, 0.0, 0.0, np.nan],
+        distance_mpc=[np.nan, 70.0, 100.0, 95.0],
+    )
+
+    assert NamesakeSplitStep("_norm_key").process(frame)["_norm_key"].tolist() == ["udg5", "udg5#1", "udg5#2", "udg5#2"]
+
+
+def test_a_distance_no_galaxy_fits_joins_the_only_galaxy_without_a_distance():
+    frame = namesakes(ra=[10.0, 50.0, np.nan], dec=[0.0, 0.0, np.nan], distance_mpc=[np.nan, 30.0, 95.0])
+
+    assert NamesakeSplitStep("_norm_key").process(frame)["_norm_key"].tolist() == ["udg5", "udg5#1", "udg5"]
+
+
+def test_namesakes_that_cannot_be_placed_are_kept_together_apart_from_the_rest():
+    frame = namesakes(
+        ra=[159.03, 234.39, np.nan, np.nan],
+        dec=[-27.32, 58.58, np.nan, np.nan],
+        distance_mpc=[51.0, 42.7, np.nan, 5.0],
+    )
+
+    assert NamesakeSplitStep("_norm_key").process(frame)["_norm_key"].tolist() == ["udg5", "udg5#1", "udg5#2", "udg5#2"]
+
+
+def test_a_namesake_group_numbers_its_galaxies_from_its_first_row():
+    frame = namesakes(ra=[np.nan, 234.39, 159.03], dec=[np.nan, 58.58, -27.32], distance_mpc=[51.0, 42.7, 51.0])
+
+    assert NamesakeSplitStep("_norm_key").process(frame)["_norm_key"].tolist() == ["udg5", "udg5#1", "udg5"]
+
+
+def test_namesakes_in_one_place_stay_one_galaxy_whatever_their_distances():
+    frame = namesakes(
+        ra=[40.445, 40.4453, np.nan, np.nan],
+        dec=[-8.403, -8.4031, np.nan, np.nan],
+        distance_mpc=[20.0, 22.1, 13.0, np.nan],
+    )
+
+    assert NamesakeSplitStep("_norm_key").process(frame) is frame
+
+
+def test_namesakes_lie_together_within_the_configured_separation():
+    frame = namesakes(ra=[10.0, 10.1], dec=[0.0, 0.0], distance_mpc=[20.0, 20.0])
+
+    assert NamesakeSplitStep("_norm_key").process(frame) is frame
+    split = NamesakeSplitStep("_norm_key", max_separation_arcmin=5.0).process(frame)
+    assert split["_norm_key"].tolist() == ["udg5", "udg5#1"]
+
+
+def test_namesake_split_leaves_unique_and_missing_keys_and_reads_no_distance_without_the_column():
+    unique = pd.DataFrame({"_norm_key": ["df44", "", ""], "ra": [1.0, 2.0, 90.0], "dec": [0.0, 0.0, 0.0]})
+    assert NamesakeSplitStep("_norm_key").process(unique) is unique
+
+    frame = pd.DataFrame({"_norm_key": ["w79", "w79", "w79"], "ra": [49.59, 49.91, np.nan], "dec": [41.77, 41.20, np.nan]})
+    split = NamesakeSplitStep("_norm_key").process(frame)
+    assert split["_norm_key"].tolist() == ["w79", "w79#1", "w79#2"]
+    assert frame["_norm_key"].tolist() == ["w79", "w79", "w79"]

@@ -23,6 +23,7 @@ from sci_etl_core.search import AsyncSqliteFts5Store, InMemoryTextSearchStore
 
 from udg_catalogue import literature as literature_module
 from udg_catalogue import pipeline as pipeline_module
+from udg_catalogue.arxiv import PoliteRateLimiter
 from udg_catalogue.config import PAPER_FACET_KEYS, PrescreenConfig
 from udg_catalogue.literature import PaperLibrary
 from udg_catalogue.pipeline import (
@@ -236,20 +237,23 @@ def test_clients_are_built_from_the_config_sections(catalogue_config):
     asyncio.run(llm_client.aclose())
 
 
-def test_arxiv_requests_share_the_full_text_rate_limit(ingestion_config, monkeypatch):
-    sections = []
+def test_arxiv_requests_share_one_polite_limiter_that_sees_every_response(ingestion_config, monkeypatch):
+    limiters = []
     build_extractor = AsyncArxivExtractor.from_config.__func__
 
     def recording(cls, *args, **kwargs):
-        sections.append(kwargs["full_text"])
+        limiters.append(kwargs["rate_limiter"])
+        assert "full_text" not in kwargs
         return build_extractor(cls, *args, **kwargs)
 
     monkeypatch.setattr(AsyncArxivExtractor, "from_config", classmethod(recording))
-    install_fakes(monkeypatch, FakeArxiv(), ScriptedLLMClient())
+    created = install_fakes(monkeypatch, FakeArxiv(), ScriptedLLMClient())
 
     asyncio.run(run_ingestion(ingestion_config, logging.getLogger(LOGGER_NAME)))
 
-    assert sections == [ingestion_config.full_text]
+    [limiter] = limiters
+    assert isinstance(limiter, PoliteRateLimiter)
+    assert limiter.observe in created["http_client"].event_hooks["response"]
 
 
 def test_saved_offset_is_used_when_newest_first_is_off(ingestion_config, monkeypatch):
@@ -389,7 +393,7 @@ def test_forget_papers_targets_the_indexing_state_when_indexing(ingestion_config
     ]
 
 
-def test_a_forgotten_paper_is_extracted_again_by_a_rescan_from_cached_answers(ingestion_config, monkeypatch):
+def test_a_forgotten_paper_is_extracted_again_from_cached_answers_and_cached_full_text(ingestion_config, monkeypatch):
     arxiv = FakeArxiv()
     llm = ScriptedLLMClient()
     install_fakes(monkeypatch, arxiv, llm)
@@ -402,7 +406,8 @@ def test_a_forgotten_paper_is_extracted_again_by_a_rescan_from_cached_answers(in
     processed = asyncio.run(run_ingestion(config, logger, start_index=0))
 
     assert processed == 1
-    assert arxiv.eprint_requests == 2
+    assert arxiv.eprint_requests == 1
+    assert (config.paths.full_text_cache / f"{OBSERVATIONAL_ID}.txt").is_file()
     assert len(llm.calls) == calls_after_first_run
     raw = pd.read_csv(config.paths.raw_catalogue, dtype={"record_id": str})
     assert raw["record_id"].tolist() == [OBSERVATIONAL_ID]

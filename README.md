@@ -11,7 +11,7 @@
 
 </div>
 
-> **An automated pipeline that screens astrophysics papers on arXiv and extracts measurements of ultra-diffuse galaxies (UDGs) with DeepSeek V4-Flash. It publishes the results as a cross-matched catalogue of 977 objects, explorable through an interactive 3D map and a Streamlit dashboard.**
+> **An automated pipeline that screens astrophysics papers on arXiv and extracts measurements of ultra-diffuse galaxies (UDGs) with DeepSeek V4-Flash. It publishes the results as a cross-matched catalogue of 1,012 objects, explorable through an interactive 3D map and a Streamlit dashboard.**
 >
 > Every relevant paper is also kept in a local paper memory, so the dashboard can search the literature by keyword and by meaning, find the papers that mention a catalogued galaxy, and grow a graph of related papers.
 >
@@ -46,9 +46,11 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 - **Interactive exploration.** A Plotly 3D map and a Streamlit dashboard offer filtering, analytics and CSV export.
 - **Paper search.** Each relevant paper's full text is indexed for Boolean keyword search (SQLite FTS5 with BM25) and embedded for search by meaning. Hybrid search fuses both rankings, with category and year filters.
 - **Discovery graphs.** Starting from any paper, the dashboard grows a graph of related papers, linked by similar content or shared authors, and groups them into communities.
+- **Polite arXiv access.** One arXiv request runs at a time, each starting 3–5 s (randomised) after the previous one ended, and a 429 or 503 pauses every arXiv request for a minute, doubling while the throttling lasts, up to 15 minutes.
+- **Full-text cache.** Each paper's parsed LaTeX or PDF text is kept in `data/full_text/`, keyed by its versioned arXiv id, so `--reprocess` and rebuilds after a prompt change read it from disk instead of downloading it again.
 - **Fault tolerance.** Requests are retried with backoff, and CSV and state writes are crash-safe. Papers that fail are retried on the next run instead of being marked done. Ctrl+C lets papers already in progress finish before the run stops.
 - **Cached LLM answers.** Relevance and extraction answers are cached in SQLite, so a rerun or a rebuild never pays twice for the same paper.
-- **Bounded async ingestion.** Up to six papers are processed at once.
+- **Bounded async ingestion.** Up to 16 papers are processed at once. arXiv requests are paced by the polite limiter whatever this number is, so the extra papers are DeepSeek calls running alongside the downloads.
 - **Container-ready.** A Dockerfile and a Compose file are included.
 
 ---
@@ -58,10 +60,10 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 | Metric | Value |
 |--------|-------|
 | **arXiv submissions screened** | 462 |
-| **Unique galaxies catalogued** | 977 |
+| **Unique galaxies catalogued** | 1,012 |
 | **Objects with all six parameters (`Confirmed`)** | 21 (2.1%) |
-| **Objects with sky position and distance (3D map)** | 502 |
-| **3D spatial groups (DBSCAN)** | 36 |
+| **Objects with sky position and distance (3D map)** | 525 |
+| **3D spatial groups (DBSCAN)** | 35 |
 | **IAU constellations represented** | 39 |
 | **Median record completeness** | 66.7% |
 | **Literature snapshot** | 2026-10-21 |
@@ -72,11 +74,11 @@ Set `DEEPSEEK_API_KEY` in `.env` before running the pipeline. The dashboard also
 
 | Parameter | Column | Unit | Objects | Coverage | Median |
 |---|---|---|---:|---:|---:|
-| Right ascension, declination (ICRS) | `ra`, `dec` | deg | 776 | 79.4% | — |
-| Distance | `distance_mpc` | Mpc | 618 | 63.3% | 72.3 |
-| Effective radius | `effective_radius_kpc` | kpc | 728 | 74.5% | 2.10 |
-| Stellar mass | `stellar_mass_solar` | M☉ | 391 | 40.0% | 8.3 × 10⁷ |
-| Dark-matter fraction | `dark_matter_fraction` | — | 29 | 3.0% | 0.94 |
+| Right ascension, declination (ICRS) | `ra`, `dec` | deg | 799 | 79.0% | — |
+| Distance | `distance_mpc` | Mpc | 640 | 63.2% | 72.3 |
+| Effective radius | `effective_radius_kpc` | kpc | 764 | 75.5% | 2.10 |
+| Stellar mass | `stellar_mass_solar` | M☉ | 410 | 40.5% | 9.6 × 10⁷ |
+| Dark-matter fraction | `dark_matter_fraction` | — | 29 | 2.9% | 0.94 |
 
 ---
 
@@ -105,7 +107,7 @@ flowchart LR
 | **Paper memory** | Each relevant paper's title, abstract, full text, authors, categories and year go into a keyword index (`paper_index.db`). The full text is also split into 350-word passages and embedded into `paper_memory.db`. A failure here is logged and never costs the paper its extraction. | [literature.py](udg_catalogue/literature.py) |
 | **Extraction** | For each object the paper classifies as a UDG or UDG candidate, the LLM returns `galaxy_name`, `ra`, `dec`, `distance_mpc`, `effective_radius_kpc`, `stellar_mass_solar` and `dark_matter_fraction`. The prompt fixes the units: ICRS decimal degrees, with sexagesimal positions converted; Mpc; physical kpc, never converted from an angle; and solar masses, converted from logarithms. Percentages become fractions, only central values are kept, and values the paper doesn't report, limits included, are `null`. | [prompts.py](udg_catalogue/prompts.py) |
 | **Validation** | A record is rejected if its name is missing, contains a simulation keyword as a whole word (e.g. `tng`, `mock`, `toy`), or only identifies the object within its paper, such as `4692`, `ID 4692`, `No. 12`, `Object 3`, `source 7` or `# 5`. It is also rejected if a value falls outside its physical range: RA in [0°, 360°], Dec in [−90°, 90°], distance in (0, 10⁴] Mpc, effective radius in (0, 100] kpc, stellar mass in (0, 10¹²] M☉ and dark-matter fraction in [0, 1]. Out-of-range values are rejected, not clipped, because a value such as a dark-matter fraction of 96 usually means the paper was misread. Finally, a record needs at least one physical measurement or both RA and Dec. Each rejected galaxy is logged with its reason and stored in `data/rejected_galaxies.db` with a rule code (`no-name`, `paper-local-name`, `simulation-keyword`, `not-a-number`, `not-positive`, `out-of-range` or `no-measurement`); see [Reviewing Rejected Galaxies](#reviewing-rejected-galaxies). Accepted galaxies are appended to `udg_database.csv` with the paper's arXiv id in `record_id`; a paper that is extracted again replaces its own rows. | [validation.py](udg_catalogue/validation.py), [pipeline.py](udg_catalogue/pipeline.py) |
-| **Name matching** | Names are compared after normalisation: NFKC and case folding, punctuation removed, `Dragonfly` → `DF`, leading zeros stripped. So `DF 44`, `DF-44` and `Dragonfly 044` match, while `KDG 44` and `DF 44` stay distinct. When rows are merged, the values of the first paper processed are kept, and later papers only fill values it lacks. | [naming.py](udg_catalogue/naming.py) |
+| **Name matching** | Names are compared after normalisation: NFKC and case folding, punctuation removed, `Dragonfly` → `DF`, leading zeros stripped. A leading `UDG` label before a designation is dropped, so `DF 44`, `DF-44`, `Dragonfly 044` and `UDG-DF44` match, while `KDG 44` and `DF 44` stay distinct, and so does `UDG 7`. A name with aliases in parentheses matches each of them: `Yagi276 (DF28)` matches `DF28`. Rows that share a name but lie more than 10′ apart on the sky are different galaxies, as when two papers on different fields each number their UDGs 1, 2, 3; a row without a position then joins the galaxy whose distance agrees with its own within a factor of 1.5, and stays apart when none does. When rows are merged, the values of the first paper processed are kept, and later papers only fill values it lacks. | [naming.py](udg_catalogue/naming.py) |
 | **Sky matching** | Every pair of rows within 3″ is found with `SkyCoord.search_around_sky`, and pairs that share a row are grouped, so exact duplicates and groups of three or more become one row. Merging fills gaps without discarding values. | [astrometry.py](udg_catalogue/astrometry.py) |
 | **Post-processing** | The sorted catalogue is built from the raw catalogue alone. Measurements given as text, such as `3.2 ± 0.4`, are left empty here and stay readable in the raw catalogue. Each merged galaxy lists its papers in `source_papers`. Completeness, constellation, spatial group and quality flag are computed, and rows are sorted. Values are kept as extracted; nothing is clipped. | [postprocess.py](udg_catalogue/postprocess.py) |
 
@@ -151,6 +153,7 @@ Values are extracted automatically, so check them against the original papers be
 - **No UDG definition imposed.** The catalogue takes each paper's classification as given and applies no size or surface-brightness cut, such as $R_\mathrm{e} \geq 1.5$ kpc and $\mu_{0,g} \geq 24$ mag arcsec⁻² ([van Dokkum et al. 2015](https://doi.org/10.1088/2041-8205/798/2/L45)).
 - **Spatial groups are not bound structures.** With `min_samples = 2`, any two objects within 5 Mpc form a group, and distance errors are often of that size.
 - **Remaining duplicates.** Name variants outside the normalisation rules (e.g. `N1052-DF2` and `NGC 1052-DF2`) are merged only when both records have coordinates.
+- **Field-local names.** Two papers on the same field that number their UDGs differently cannot be told apart by name, and a row with a field-local name such as `UDG 5` but no position or distance is kept apart from the galaxies of that name instead of being guessed into one.
 - **Dark-matter fractions on a bound.** The catalogue rebuilt on 2026-10-21 holds 3 dark-matter fractions of exactly 0 and 5 of exactly 1. The zeros include NGC 1052-DF2 and NGC 1052-DF4, which papers report as lacking dark matter, but a bound can also be a misread limit, so check these against their papers.
 - **Checks on the committed catalogue.** `tests/test_published_catalogue.py` checks the committed catalogue against these rules: no two galaxies within 3″, no paper-local names, every value within its physical range, and no dark-matter fraction of exactly 0 or 1. The catalogue rebuilt on 2026-10-21 passes the first three; the last is marked as an expected failure until a rebuild passes it.
 - **Not exactly reproducible.** LLM output varies between runs, so a rebuild gives a similar catalogue, not an identical file.
@@ -270,7 +273,7 @@ The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing, or `
 |---|---|---|
 | `pipeline.search_query` | `cat:astro-ph* AND (ti:"ultra-diffuse" OR abs:"ultra-diffuse" OR …)` | arXiv selection query (see [config.yaml](config.yaml) for the whole query) |
 | `pipeline.total_limit` | `2000` | Relevant papers read in full per run |
-| `pipeline.max_concurrency` | `6` | Papers processed concurrently |
+| `pipeline.max_concurrency` | `16` | Papers processed concurrently |
 | `pipeline.newest_first` | `true` | Stop at the papers the last run saw first, then resume from the saved offset |
 | `embeddings.enabled` | `true` | Embed passages for search by meaning; `false` keeps keyword search only |
 | `embeddings.provider` / `embeddings.model` | `local` / `all-MiniLM-L6-v2` | `local` runs sentence-transformers; `openai` calls an OpenAI-compatible endpoint |
@@ -281,9 +284,12 @@ The exit code is `0` on success and `2` when `DEEPSEEK_API_KEY` is missing, or `
 | `search_index.cache_size_mb` / `search_index.mmap_size_mb` | `64` / `null` | Page cache and memory map of the SQLite text index; `null` keeps SQLite's default |
 | `prescreen.enabled` | `true` | Run the embedding prescreen before the DeepSeek relevance check (see below) |
 | `prescreen.threshold` / `prescreen.concepts` | `0.35` / six UDG observation concepts | Lowest cosine similarity to any concept that passes the prescreen |
-| `http.max_retries` / `http.backoff_factor` | `4` / `5.0` | Retry policy for arXiv requests |
-| `full_text.max_concurrency` | `4` | arXiv requests in flight at once, listing and full text together, however many papers `pipeline.max_concurrency` processes |
+| `http.max_retries` / `http.backoff_factor` | `5` / `5.0` | Retry policy for arXiv requests |
+| `arxiv.min_interval` / `arxiv.jitter` | `3.0` / `2.0` | Seconds from the end of one arXiv request to the start of the next, plus up to `jitter` at random; one request runs at a time, listing and full text together |
+| `arxiv.cooldown` / `arxiv.max_cooldown` | `60.0` / `900.0` | Pause of every arXiv request after a 429 or 503, doubled for each further one, up to `max_cooldown`; a longer `Retry-After` is honoured |
+| `paths.full_text_cache` | `data/full_text` | Parsed full text of each paper, so it is downloaded once |
 | `deduplication.max_separation_arcsec` | `3.0` | Sky-matching radius |
+| `deduplication.namesake_separation_arcmin` / `deduplication.namesake_distance_ratio` | `10.0` / `1.5` | Rows sharing a name farther apart than this are different galaxies; a row without a position joins the one whose distance agrees within this factor |
 | `clustering.max_distance_mpc` | `5.0` | DBSCAN `eps` |
 | `clustering.min_samples` | `2` | DBSCAN `min_samples` |
 

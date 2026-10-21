@@ -29,6 +29,7 @@ from sci_etl_core.config import PipelineConfig
 from sci_etl_core.parsers import LatexTarballParser, PdfPlumberParser
 from sci_etl_core.search import AsyncTextSearchStore
 
+from udg_catalogue.arxiv import FullTextCache, PoliteRateLimiter, watch_responses
 from udg_catalogue.config import KEY_COLUMN, MEASUREMENT_FIELDS, CatalogueConfig
 from udg_catalogue.literature import PaperLibrary, build_chunker, open_paper_library
 from udg_catalogue.progress import LoggingExtractor, LoggingParser, LoggingRelevanceFilter, PipelineEventLogger
@@ -69,6 +70,12 @@ def build_catalogue_exporter(config: CatalogueConfig) -> AsyncCsvExporter:
 
 def build_http_client(config: CatalogueConfig) -> httpx.AsyncClient:
     return config.http.build_client()
+
+
+def build_arxiv_limiter(config: CatalogueConfig) -> PoliteRateLimiter:
+    """Pace every arXiv request, listing and full text alike, as the ``arxiv`` config section says."""
+    arxiv = config.arxiv
+    return PoliteRateLimiter(arxiv.min_interval, arxiv.jitter, arxiv.cooldown, arxiv.max_cooldown)
 
 
 def build_llm_client(config: CatalogueConfig) -> AsyncLLMClient:
@@ -194,17 +201,19 @@ def _assemble(
         closeables.append(rejections)
         entity_extractor = build_entity_extractor(config, cached_llm, rejections)
         exporter = build_catalogue_exporter(config)
+    limiter = build_arxiv_limiter(config)
+    watch_responses(http_client, limiter)
     extractor = AsyncArxivExtractor.from_config(
         config.http,
         config.pipeline,
         client=http_client,
         pdf_parser=LoggingParser(PdfPlumberParser(), "PDF", logger.info),
         latex_parser=LoggingParser(LatexTarballParser(), "LaTeX source", logger.info),
-        full_text=config.full_text,
+        rate_limiter=limiter,
     )
     return AsyncETLPipeline.from_config(
         config.pipeline,
-        extractor=LoggingExtractor(extractor, logger.info),
+        extractor=FullTextCache(LoggingExtractor(extractor, logger.info), config.paths.full_text_cache, logger.info),
         relevance_filter=LoggingRelevanceFilter(relevance_filter, logger.info),
         entity_extractor=entity_extractor,
         exporter=exporter,
