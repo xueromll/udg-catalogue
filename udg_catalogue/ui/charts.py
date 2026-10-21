@@ -32,6 +32,9 @@ SCATTER_HEIGHT = 460
 WALL = "#EDEFF2"
 OTHER = "#C4CAD3"  # clusters beyond the palette: lighter than the unclustered grey, named on hover only
 NO_VALUE = "no value"
+OUTLINE: dict[str, Any] = {"color": INK, "width": 1}  # every map point gets an edge so overlapping galaxies stay apart
+MARKER_SHRINK = 1.3  # map markers a little under the report size so the dense core does not merge into one blob
+OUTLIER_QUANTILE = 0.98  # galaxies beyond this radius are pinned to it, so a few far ones do not shrink the rest
 _POINT_FIELDS = ("x", "y", "z", "text", "hovertext", "ids", "customdata")
 AXIS: dict[str, Any] = {
     "gridcolor": SEPARATOR,
@@ -104,10 +107,29 @@ def split_missing(trace: go.Scatter3d) -> go.Scatter3d | None:
     return grey
 
 
+def pull_in_outliers(figure: go.Figure, quantile: float = OUTLIER_QUANTILE) -> None:
+    """Move every point farther from the origin than the ``quantile`` radius onto that radius, keeping its direction.
+
+    The scene autoranges to the farthest galaxy, so one at 1.5 Gpc squeezes the
+    other thousand into the middle of the box; hover still gives its true distance.
+    """
+    traces = [trace for trace in figure.data if trace.x is not None and len(trace.x)]
+    if not traces:
+        return
+    radii = [np.sqrt(np.asarray(t.x, float) ** 2 + np.asarray(t.y, float) ** 2 + np.asarray(t.z, float) ** 2) for t in traces]
+    limit = float(np.quantile(np.concatenate(radii), quantile))
+    if limit <= 0:
+        return
+    for trace, radius in zip(traces, radii):
+        scale = np.minimum(1.0, limit / np.where(radius > 0, radius, limit))
+        trace.x, trace.y, trace.z = (np.asarray(values, float) * scale for values in (trace.x, trace.y, trace.z))
+
+
 def restyle_map(figure: go.Figure) -> go.Figure:
     """The 3D map on the canvas ground: Viridis for a measure, with galaxies that lack it in grey; by cluster, one hue
     each for the six largest clusters, grey for the unclustered and a lighter grey, off the legend, for every smaller
-    cluster (hover still names it)."""
+    cluster (hover still names it). The few farthest galaxies are pinned to the edge and markers are shrunk so the
+    dense core spreads over the scene."""
     slate(figure)
     figure.update_layout(
         scene={"bgcolor": CANVAS, **{axis: dict(SCENE_AXIS) for axis in ("xaxis", "yaxis", "zaxis")}},
@@ -118,9 +140,12 @@ def restyle_map(figure: go.Figure) -> go.Figure:
     for trace in list(figure.data):
         if trace not in discrete and (grey := split_missing(trace)) is not None:
             figure.add_trace(grey)
+    pull_in_outliers(figure)
     for trace in figure.data:
-        trace.marker.line = {"width": 0}
-        trace.marker.opacity = 0.9
+        trace.marker.line = OUTLINE
+        trace.marker.opacity = 1
+        trace.marker.sizeref = (trace.marker.sizeref or 1) * MARKER_SHRINK
+        trace.marker.sizemin = 3
     ranked = sorted((trace for trace in discrete if trace.name != UNCLUSTERED), key=lambda trace: -(0 if trace.x is None else len(trace.x)))
     for rank, trace in enumerate(ranked):
         if rank < len(CATEGORICAL):

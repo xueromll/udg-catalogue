@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -49,7 +50,7 @@ def test_restyle_map_leaves_a_continuous_colour_axis_on_the_measure_scale():
 
     assert not isinstance(figure.data[0].marker.color, str)
     assert figure.layout.coloraxis.colorscale[-1][1] == "#FDE725"
-    assert figure.data[0].marker.line.width == 0
+    assert figure.data[0].marker.line.width == charts.OUTLINE["width"]
 
 
 def test_positive_values_filters_non_numeric_and_non_positive_entries():
@@ -99,11 +100,23 @@ def test_restyle_map_draws_galaxies_without_the_measure_in_grey_instead_of_as_ze
     charts.restyle_map(figure)
 
     measured, grey = figure.data
-    assert list(measured.x) == [0.0, 2.0] and list(measured.marker.color) == [0.5, 1.0] and list(measured.marker.size) == [3, 5]
+    assert measured.x[0] == 0.0 and len(measured.x) == 2 and list(measured.marker.color) == [0.5, 1.0] and list(measured.marker.size) == [3, 5]
     assert list(grey.x) == [1.0] and grey.marker.color == MUTED and list(grey.marker.size) == [4]
     assert grey.name == charts.NO_VALUE and grey.showlegend is True and grey.marker.coloraxis is None
     assert [list(row) for row in grey.customdata] == [[4]]
     assert charts.split_missing(measured) is None
+    assert all(trace.marker.line.color == charts.OUTLINE["color"] and trace.marker.line.width > 0 for trace in figure.data)
+
+
+def test_pull_in_outliers_pins_far_points_to_the_quantile_radius_and_keeps_their_direction():
+    figure = go.Figure(go.Scatter3d(x=[1.0, 0.0, 0.0, 30.0], y=[0.0, 2.0, 0.0, 40.0], z=[0.0, 0.0, 0.0, 0.0]))
+
+    charts.pull_in_outliers(figure, quantile=0.5)
+
+    trace = figure.data[0]
+    np.testing.assert_allclose(list(trace.x), [1.0, 0.0, 0.0, 0.9])
+    np.testing.assert_allclose(list(trace.y), [0.0, 1.5, 0.0, 1.2])
+    assert list(trace.z) == [0.0, 0.0, 0.0, 0.0]
 
 
 def test_px_discrete_figures_colour_the_six_largest_groups_and_fold_the_rest_off_the_legend():
