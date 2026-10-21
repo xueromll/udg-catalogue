@@ -1,8 +1,8 @@
 {
   "manifest_version": 1,
-  "built_at": "2026-10-21T13:09:05.879262+00:00",
+  "built_at": "2026-10-21T13:30:27.019020+00:00",
   "software": {
-    "sci-etl-core": "0.6.0",
+    "sci-etl-core": "0.7.0",
     "udg-catalogue": "1.0.0"
   },
   "llm": {
