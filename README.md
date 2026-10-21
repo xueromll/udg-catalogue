@@ -414,7 +414,7 @@ The map's radial axis is scaled as √distance so that nearby and distant galaxi
 
 ![3D Map](assets/demo.png)
 
-*The 3D map board: UDGs with known position and distance, coloured by dark-matter fraction on Viridis; a galaxy without the measure is grey, never drawn as zero. Hover over any point to see its constellation, cluster, completeness and measured parameters. The paginated data table board follows it.*
+*The 3D map board: UDGs with known position and distance, coloured by dark-matter fraction on Viridis; a galaxy without the measure is grey, never drawn as zero. Hover over any point to see its constellation, cluster, completeness and measured parameters. The paginated data table board follows it, with the papers each galaxy was merged from in `source_papers`.*
 
 ### Analytics Dashboard
 
@@ -426,7 +426,7 @@ The map's radial axis is scaled as √distance so that nearby and distant galaxi
 
 ![Paper Search](assets/interface-search.png)
 
-*The search page for `dark matter deficient`: the query bar with its parsed chips and status line, the hits as topic rows with their keyword and meaning ranks, the discovery graph of the Dragonfly survey paper with the seed in the accent colour and the papers outside the hits dimmed, and the inspector with the paper's authors, year and category. Facets and the catalogue filters are boards in the sidebar.*
+*The search page for `dark matter deficient`: the query bar with its parsed chips and status line, the hits as topic rows with their keyword and meaning ranks, the discovery graph of the Dragonfly survey paper with the seed in the accent colour and the papers outside the hits dimmed, and the inspector with the paper's authors, year and category and the catalogue galaxies that came from it: NGC 1052-DF2, DF4 and DF1, each merged across the papers that measured it. Facets and the catalogue filters are boards in the sidebar.*
 
 ---
 
