@@ -16,6 +16,7 @@ from udg_catalogue.ui.graph import (
     kind_label,
     layout_positions,
     layout_seed,
+    legend_keys,
     node_fill,
     node_label,
     node_options,
@@ -23,7 +24,7 @@ from udg_catalogue.ui.graph import (
     node_stroke,
     selected_from_state,
 )
-from udg_catalogue.ui.tokens import ACCENT, CATEGORICAL, HALO, INK, MUTED, SEPARATOR, rgba
+from udg_catalogue.ui.tokens import ACCENT, CANVAS, CATEGORICAL, HALO, INK, MUTED, SEPARATOR, rgba
 
 SEED = GraphNode("2601.00001", "Dragonfly 44 <revisited>", degree=2, community=7, metadata={"year": "2016"})
 NEIGHBOUR = GraphNode("2601.00002", "NGC 1052-DF2", degree=1, community=7)
@@ -99,25 +100,65 @@ def test_node_fill_and_stroke_follow_the_visual_system():
 def test_canvas_draws_one_trace_per_drawn_kind_and_one_for_the_nodes():
     figure = build_canvas(GRAPH)
 
-    assert [trace.name for trace in figure.data] == ["semantic", "metadata", "citation", "papers"]
-    assert all(trace.line.color == SEPARATOR for trace in figure.data[:-1])
+    assert [trace.name for trace in figure.data] == [
+        "semantic",
+        "metadata (authors, categories)",
+        "citation",
+        "chosen paper",
+        "community 7 · 2 papers",
+        "community 3 · 1 paper",
+        "papers",
+    ]
+    assert [(trace.line.color, trace.line.dash) for trace in figure.data[:3]] == [
+        (SEPARATOR, "solid"),
+        (MUTED, "dot"),
+        (MUTED, "dash"),
+    ]
     papers = figure.data[-1]
+    assert papers.showlegend is False
     assert list(papers.customdata) == ["2601.00001", "2601.00002", "2601.00003"]
     assert list(papers.marker.size) == [2 * node_radius(2), 9, 9]
     assert list(papers.marker.color) == [ACCENT, CATEGORICAL[0], CATEGORICAL[1]]
     assert list(papers.marker.line.width) == [4, 1, 1]
     assert figure.layout.height == CANVAS_HEIGHT
     assert figure.layout.title.text is None
-    assert figure.layout.showlegend is False
+    assert figure.layout.showlegend is True
+    assert figure.layout.legend.orientation == "h" and figure.layout.legend.itemclick is False
     assert figure.layout.xaxis.visible is False
 
 
 def test_canvas_honours_edge_kind_toggles_and_fullscreen():
     figure = build_canvas(GRAPH, CanvasStyle(kinds_on=frozenset({"semantic"}), fullscreen=True))
 
-    assert [trace.name for trace in figure.data] == ["semantic", "papers"]
+    assert [trace.name for trace in figure.data if trace.mode == "lines"] == ["semantic"]
+    assert figure.data[-1].name == "papers"
     assert figure.layout.height == FULLSCREEN_HEIGHT
     assert len(build_canvas(DiscoveryGraph((), (), None, True)).data) == 1
+
+
+def test_legend_keys_name_every_node_colour_on_the_canvas():
+    def keys(graph, style):
+        return [(key.name, key.marker.color, key.marker.line.color) for key in legend_keys(graph, style, community_ranks(graph.nodes))]
+
+    seed = ("chosen paper", ACCENT, HALO)
+    assert keys(GRAPH, CanvasStyle(selected=OUTLIER.record_id)) == [
+        seed,
+        ("selected paper", CANVAS, HALO),
+        ("community 7 · 2 papers", CATEGORICAL[0], INK),
+        ("community 3 · 1 paper", CATEGORICAL[1], INK),
+    ]
+    assert keys(GRAPH, CanvasStyle(hit_ids=frozenset({NEIGHBOUR.record_id}))) == [
+        seed,
+        ("community 7 · 2 papers", CATEGORICAL[0], INK),
+        ("not in the search results", DIMMED, DIMMED),
+    ]
+    crowded = DiscoveryGraph(tuple(GraphNode(f"n{index}", "", degree=0, community=index) for index in range(8)), (), "n0", True)
+    assert [name for name, _fill, _line in keys(crowded, CanvasStyle())] == [
+        "chosen paper",
+        *(f"community {index} · 1 paper" for index in range(1, 6)),
+        "2 smaller communities",
+    ]
+    assert keys(crowded, CanvasStyle())[-1][1] == MUTED
 
 
 def test_canvas_caption_counts_nodes_drawn_edges_and_dimmed_nodes():

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import zlib
+from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,6 +23,7 @@ from sci_etl_core.search import DiscoveryGraph, GraphNode
 from udg_catalogue.paper_views import node_hover, spring_layout
 from udg_catalogue.ui.tokens import (
     ACCENT,
+    CANVAS,
     CATEGORICAL,
     DIMMED_ALPHA,
     HALO,
@@ -34,10 +36,25 @@ from udg_catalogue.ui.tokens import (
 
 RADIUS_MIN = 3.0
 RADIUS_MAX = 14.0
+KEY_SIZE = 10
 CANVAS_HEIGHT = 560
 FULLSCREEN_HEIGHT = 820
 HIDDEN_AXIS: dict[str, Any] = {"visible": False, "showgrid": False, "zeroline": False, "fixedrange": False}
 KIND_LABELS: dict[str, str] = {"semantic": "semantic", "metadata": "metadata (authors, categories)"}
+# Edge kinds differ by dash, so the legend tells them apart; the faint separator is kept for the dense semantic web.
+EDGE_STYLES: dict[str, tuple[str, str]] = {"semantic": (SEPARATOR, "solid"), "metadata": (MUTED, "dot")}
+DEFAULT_EDGE_STYLE = (MUTED, "dash")
+# The legend only names what is drawn (edge kinds and every node colour); the checkboxes above the canvas stay the one way to switch an edge kind off.
+LEGEND: dict[str, Any] = {
+    "orientation": "h",
+    "x": 0,
+    "xanchor": "left",
+    "y": 0,
+    "yanchor": "top",
+    "itemsizing": "constant",
+    "itemclick": False,
+    "itemdoubleclick": False,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,8 +131,49 @@ def node_stroke(node: GraphNode, graph: DiscoveryGraph, style: CanvasStyle) -> t
     return INK, 1.0
 
 
+def legend_key(name: str, fill: str, stroke: tuple[str, float] = (INK, 1.0)) -> go.Scatter:
+    """An empty trace that only puts one node look, with its name, into the legend."""
+    colour, width = stroke
+    return go.Scatter(
+        x=[None],
+        y=[None],
+        mode="markers",
+        marker={"size": KEY_SIZE, "color": fill, "line": {"color": colour, "width": width}},
+        hoverinfo="skip",
+        name=name,
+    )
+
+
+def plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def legend_keys(graph: DiscoveryGraph, style: CanvasStyle, ranks: Mapping[int, int]) -> list[go.Scatter]:
+    """One key per node look on the canvas, in the order ``node_fill`` decides it: the chosen paper, the selection,
+    each palette community with its size, the smaller communities in grey, and the papers a search dims."""
+    keys: list[go.Scatter] = []
+    record_ids = {node.record_id for node in graph.nodes}
+    if graph.seed_record_id in record_ids:
+        keys.append(legend_key("chosen paper", ACCENT, (HALO, 4.0)))
+    if style.selected in record_ids and style.selected != graph.seed_record_id:
+        keys.append(legend_key("selected paper", CANVAS, (HALO, 3.0)))
+    drawn = [node for node in graph.nodes if node.record_id != graph.seed_record_id and not is_dimmed(node, graph, style)]
+    sizes = Counter(node.community for node in graph.nodes)
+    shown = {node.community for node in drawn}
+    for community, rank in sorted(ranks.items(), key=lambda item: item[1]):
+        if rank < len(CATEGORICAL) and community in shown:
+            keys.append(legend_key(f"community {community} · {plural(sizes[community], 'paper')}", CATEGORICAL[rank]))
+    smaller = {community for community in shown if ranks[community] >= len(CATEGORICAL)}
+    if smaller:
+        keys.append(legend_key("1 smaller community" if len(smaller) == 1 else f"{len(smaller)} smaller communities", MUTED))
+    if any(is_dimmed(node, graph, style) for node in graph.nodes):
+        keys.append(legend_key("not in the search results", rgba(MUTED, DIMMED_ALPHA), (rgba(MUTED, DIMMED_ALPHA), 1.0)))
+    return keys
+
+
 def build_canvas(graph: DiscoveryGraph, style: CanvasStyle = CanvasStyle()) -> go.Figure:
-    """The figure: one line trace per drawn edge kind, one marker trace for the nodes, no title, legend or colour bar."""
+    """The figure: one line trace per drawn edge kind, one empty key per node look, the node trace last so it draws on
+    top, and a legend below the canvas naming every edge kind and node colour; no title or colour bar."""
     where = layout_positions(graph)
     ranks = community_ranks(graph.nodes)
     figure = go.Figure()
@@ -128,18 +186,19 @@ def build_canvas(graph: DiscoveryGraph, style: CanvasStyle = CanvasStyle()) -> g
             if edge.kind == kind:
                 xs += [where[edge.source][0], where[edge.target][0], None]
                 ys += [where[edge.source][1], where[edge.target][1], None]
+        colour, dash = EDGE_STYLES.get(kind, DEFAULT_EDGE_STYLE)
         figure.add_trace(
             go.Scatter(
                 x=xs,
                 y=ys,
                 mode="lines",
-                line={"color": SEPARATOR, "width": 1},
+                line={"color": colour, "width": 1, "dash": dash},
                 hoverinfo="skip",
-                name=kind,
-                showlegend=False,
+                name=kind_label(kind),
             )
         )
-    strokes = [node_stroke(node, graph, style) for node in graph.nodes]
+    figure.add_traces(legend_keys(graph, style, ranks))
+    strokes =[node_stroke(node, graph, style) for node in graph.nodes]
     figure.add_trace(
         go.Scatter(
             x=[where[node.record_id][0] for node in graph.nodes],
@@ -163,7 +222,8 @@ def build_canvas(graph: DiscoveryGraph, style: CanvasStyle = CanvasStyle()) -> g
             yaxis=dict(HIDDEN_AXIS, scaleanchor="x"),
             margin={"l": 0, "r": 0, "t": 0, "b": 0},
             height=FULLSCREEN_HEIGHT if style.fullscreen else CANVAS_HEIGHT,
-            showlegend=False,
+            showlegend=True,
+            legend=dict(plotly_layout()["legend"], **LEGEND),
             dragmode="pan",
             clickmode="event+select",
         )
