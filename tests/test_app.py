@@ -115,9 +115,9 @@ def test_dashboard_renders_every_view_of_the_committed_catalogue():
     assert len(app.dataframe) == 1
     assert len(app.get("html")) == 1
     rendered = rendered_markdown(app)
-    assert "1,012 galaxies in the catalogue" in rendered
+    assert "1,031 galaxies in the catalogue" in rendered
     assert '<span class="udg-crumb udg-crumb-here">Data Table</span>' in rendered
-    assert "the current selection shows 1,012." in rendered
+    assert "the current selection shows 1,031." in rendered
     assert '<table class="udg-forumline">' in rendered and "It is currently" in rendered
     assert "powered by sci-etl-core" in rendered
 
