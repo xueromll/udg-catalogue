@@ -399,23 +399,29 @@ The map's radial axis is scaled as √distance so that nearby and distant galaxi
 
 ## Gallery
 
+### Board Index
+
+![Board Index](assets/board.png)
+
+*The top of the Data Table page at 1440×900: the site header with the catalogue size, the nav strip with the time, the breadcrumb, and the board index listing the selection's eight largest constellations and clusters with their galaxies, confirmed and mapped counts and nearest mapped galaxy; ■ marks a group with a confirmed galaxy. The navigation and catalogue filters are boards in the sidebar.*
+
 ### Galaxy Map
 
 ![3D Map](assets/demo.png)
 
-*Interactive 3D map of UDGs with known position and distance, coloured by dark-matter fraction on Viridis; a galaxy without the measure is grey, never drawn as zero. Hover over any point to see its constellation, cluster, completeness and measured parameters.*
+*The 3D map board: UDGs with known position and distance, coloured by dark-matter fraction on Viridis; a galaxy without the measure is grey, never drawn as zero. Hover over any point to see its constellation, cluster, completeness and measured parameters. The paginated data table board follows it.*
 
 ### Analytics Dashboard
 
 ![Analytics](assets/analytics.png)
 
-*Statistical plots: stellar mass and effective radius in log-spaced bins with the median marked, and the mass–radius relation coloured by completeness on Viridis.*
+*The analytics board: stellar mass and effective radius in log-spaced bins with the median marked, and the mass–radius relation coloured by completeness on Viridis.*
 
 ### Paper Search
 
 ![Paper Search](assets/interface-search.png)
 
-*The search page at 1440×900: query bar with chips, hit list, graph canvas with the seed in the accent colour and communities in distinct hues, and the inspector with the paper's catalogue rows and extraction stamp. Facets are in the sidebar.*
+*The search page for `dark matter deficient`: the query bar with its parsed chips and status line, the hits as topic rows with their keyword and meaning ranks, the discovery graph of the Dragonfly survey paper with the seed in the accent colour and the papers outside the hits dimmed, and the inspector with the paper's authors, year and category. Facets and the catalogue filters are boards in the sidebar.*
 
 ---
 
